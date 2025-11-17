@@ -1,0 +1,12 @@
+venv/
+.venv/
+agent_platform.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+.env.*
+!.env.local.example
+.pytest_cache/
+uvicorn.log

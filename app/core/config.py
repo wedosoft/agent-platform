@@ -1,0 +1,39 @@
+from __future__ import annotations
+
+from functools import lru_cache
+from typing import List, Optional
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """기본 FastAPI 설정과 공통 환경 변수를 관리"""
+
+    api_prefix: str = "/api"
+    app_name: str = "Agent Platform Backend"
+    session_ttl_minutes: int = 30
+    pipeline_base_url: str = "http://localhost:4000/pipeline"
+    redis_url: Optional[str] = None
+    redis_session_prefix: str = "agent-platform-session"
+    supabase_common_url: Optional[str] = Field(default=None, alias="supabase_common_url")
+    supabase_common_service_role_key: Optional[str] = Field(default=None, alias="supabase_common_service_role_key")
+    supabase_common_table_name: str = "documents"
+    supabase_common_default_product: Optional[str] = None
+    supabase_common_batch_size: int = 10
+    supabase_common_languages: List[str] = Field(default_factory=lambda: ["ko", "en"])
+    supabase_common_max_document_chars: int = 4000
+    supabase_common_chunk_overlap: int = 200
+    supabase_common_summary_enabled: bool = False
+    supabase_common_summary_max_chars: int = 500
+
+    model_config = SettingsConfigDict(
+        env_prefix="AGENT_PLATFORM_",
+        env_file=(".env", ".env.local"),
+        env_file_encoding="utf-8",
+    )
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
