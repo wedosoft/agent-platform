@@ -4,6 +4,7 @@ import json
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from dataclasses import asdict
+from functools import lru_cache
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, status
@@ -177,6 +178,7 @@ def _build_redis_client(url: str) -> Redis:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Redis 연결 실패: {exc}") from exc
 
 
+@lru_cache
 def get_session_repository() -> SessionRepository:
     settings = get_settings()
     ttl_seconds = settings.session_ttl_minutes * 60

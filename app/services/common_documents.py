@@ -183,11 +183,12 @@ def _build_common_documents_service() -> CommonDocumentsService:
     if not settings.supabase_common_url or not settings.supabase_common_service_role_key:
         raise CommonDocumentsError("Supabase common environment variables are not set")
 
-    languages = [
-        lang.strip()
-        for lang in (settings.supabase_common_languages or "ko,en").split(",")
-        if lang.strip()
-    ]
+    raw_languages = settings.supabase_common_languages or ["ko", "en"]
+    if isinstance(raw_languages, str):
+        candidates = raw_languages.split(",")
+    else:
+        candidates = raw_languages
+    languages = [lang.strip() for lang in candidates if isinstance(lang, str) and lang.strip()]
     config = CommonDocumentsConfig(
         url=settings.supabase_common_url,
         service_role_key=settings.supabase_common_service_role_key,

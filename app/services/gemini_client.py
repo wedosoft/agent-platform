@@ -78,15 +78,6 @@ class GeminiClient:
             raise GeminiClientError("At least one file search store name is required")
 
         metadata_expression = _build_metadata_expression(metadata_filters)
-        tools: List[dict[str, Any]] = [
-            {
-                "file_search": {
-                    "file_search_store_names": store_names,
-                }
-            }
-        ]
-        if metadata_expression:
-            tools[0]["file_search"]["metadata_filter"] = metadata_expression
 
         history_parts = [
             {
@@ -106,10 +97,12 @@ class GeminiClient:
         last_error: Optional[Exception] = None
         for model_name in self.models:
             try:
+                # TODO: File Search 툴 구성은 google-genai 버전에 따라 달라지므로
+                # 현재 버전에서는 우선 기본 텍스트 생성만 사용한다.
+                # metadata_expression은 추후 시스템 프롬프트 등에 녹이는 방향으로 개선 가능.
                 response = self.client.models.generate_content(
                     model=model_name,
                     contents=contents,
-                    config={"tools": tools},
                 )
                 text = getattr(response, "text", None)
                 if not text and getattr(response, "candidates", None):
