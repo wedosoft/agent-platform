@@ -5,8 +5,14 @@ from app.models.session import ChatResponse
 from app.services.common_chat_handler import get_common_chat_handler
 
 
-def test_chat_flow(test_client: TestClient):
+def test_chat_flow(test_client: TestClient, override_pipeline_client):
     session_id = test_client.post("/api/session").json()["sessionId"]
+    override_pipeline_client.sessions[session_id] = {
+        "sessionId": session_id,
+        "createdAt": "2025-01-01T00:00:00Z",
+        "updatedAt": "2025-01-01T00:00:00Z",
+        "questionHistory": [],
+    }
     payload = {
         "sessionId": session_id,
         "query": "테스트 질문",

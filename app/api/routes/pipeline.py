@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.core.config import get_settings
 from app.models.pipeline import PipelineStatusResponse, SyncRequest, SyncResponse
 from app.services.pipeline_client import PipelineClient, PipelineClientError, get_pipeline_client
 
@@ -11,12 +12,24 @@ def _handle_pipeline_error(exc: PipelineClientError) -> HTTPException:
 
 
 @router.get("/status", response_model=PipelineStatusResponse, response_model_by_alias=True)
-def get_status(pipeline: PipelineClient = Depends(get_pipeline_client)) -> PipelineStatusResponse:
-    try:
-        result = pipeline.get_status()
-    except PipelineClientError as exc:
-        raise _handle_pipeline_error(exc)
-    return PipelineStatusResponse.model_validate(result)
+def get_status() -> PipelineStatusResponse:
+    settings = get_settings()
+    rag_store_names = {}
+    if settings.gemini_common_store_name:
+        rag_store_names["common"] = settings.gemini_common_store_name
+
+    available_sources = [value for value in rag_store_names.values() if value]
+
+    payload = {
+        "ready": bool(available_sources),
+        "ragStoreName": available_sources[0] if available_sources else None,
+        "ragStoreNames": rag_store_names or None,
+        "lastSync": None,
+        "progress": None,
+        "storeStats": None,
+        "availableSources": available_sources,
+    }
+    return PipelineStatusResponse.model_validate(payload)
 
 
 @router.post("/sync", response_model=SyncResponse, response_model_by_alias=True)

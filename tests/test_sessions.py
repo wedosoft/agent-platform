@@ -5,7 +5,7 @@ def test_create_session(test_client: TestClient):
     response = test_client.post("/api/session")
     assert response.status_code == 201
     payload = response.json()
-    assert payload["sessionId"].startswith("session-")
+    assert len(payload["sessionId"]) == 32
     assert payload["ttlMinutes"] == 30
 
 
