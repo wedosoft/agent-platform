@@ -50,6 +50,11 @@ class GeminiClientError(RuntimeError):
     pass
 
 
+class GeminiRetryableError(GeminiClientError):
+    """Raised when a Gemini request can be retried safely."""
+    pass
+
+
 class GeminiClient:
     def __init__(
         self,

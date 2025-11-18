@@ -2,22 +2,25 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, List, Optional
+import time
+from typing import Any, Dict, Generator, List, Optional
 
 import httpx
 
 from app.models.metadata import MetadataFilter
-from app.services.gemini_client import GeminiClientError, _build_metadata_expression
+from app.services.gemini_client import (
+    GeminiClientError,
+    GeminiRetryableError,
+    _build_metadata_expression,
+)
 
 LOGGER = logging.getLogger(__name__)
 
+RETRYABLE_STATUS_CODES = {429, 500, 503}
+
 
 class GeminiFileSearchClient:
-    """Gemini File Search 전용 REST 클라이언트.
-
-    google-genai Python SDK가 아직 file_search 툴 타입을 노출하지 않기 때문에
-    공식 REST 엔드포인트(v1beta/models/*:generateContent)를 직접 호출합니다.
-    """
+    """Gemini File Search REST client with retry & streaming support."""
 
     def __init__(
         self,
@@ -26,6 +29,8 @@ class GeminiFileSearchClient:
         fallback_model: Optional[str] = None,
         *,
         timeout: float = 30.0,
+        max_attempts_per_model: int = 2,
+        retry_backoff_seconds: float = 1.5,
     ) -> None:
         if not api_key:
             raise GeminiClientError("Gemini API key is required")
@@ -36,6 +41,8 @@ class GeminiFileSearchClient:
         if fallback_model and fallback_model not in self.models:
             self.models.append(fallback_model)
         self.timeout = timeout
+        self.max_attempts_per_model = max(1, max_attempts_per_model)
+        self.retry_backoff_seconds = max(0.5, retry_backoff_seconds)
 
     def search(
         self,
@@ -45,11 +52,121 @@ class GeminiFileSearchClient:
         metadata_filters: Optional[List[MetadataFilter]] = None,
         conversation_history: Optional[List[str]] = None,
     ) -> dict[str, Any]:
+        metadata_expression = _build_metadata_expression(metadata_filters)
+        contents = self._build_contents(query, conversation_history)
+
+        last_error: Optional[Exception] = None
+        for model_name in self.models:
+            for attempt in range(self.max_attempts_per_model):
+                try:
+                    data = self._execute_request(model_name, contents, metadata_expression, store_names)
+                    return self._build_response_payload(data, store_names, metadata_filters)
+                except GeminiRetryableError as exc:
+                    last_error = exc
+                    if attempt + 1 < self.max_attempts_per_model:
+                        self._sleep_backoff(attempt)
+                        continue
+                except GeminiClientError as exc:
+                    last_error = exc
+                    LOGGER.warning("Gemini model %s failed: %s", model_name, exc)
+                    break
+
+        raise GeminiClientError("Gemini 검색 실패") from last_error
+
+    def stream_search(
+        self,
+        *,
+        query: str,
+        store_names: List[str],
+        metadata_filters: Optional[List[MetadataFilter]] = None,
+        conversation_history: Optional[List[str]] = None,
+    ) -> Generator[Dict[str, Any], None, None]:
+        metadata_expression = _build_metadata_expression(metadata_filters)
+        contents = self._build_contents(query, conversation_history)
+
+        yield {"event": "status", "data": {"message": "검색을 시작합니다."}}
+
+        for model_name in self.models:
+            yield {
+                "event": "status",
+                "data": {"message": f"{model_name} 모델로 검색 중입니다.", "model": model_name},
+            }
+            for attempt in range(self.max_attempts_per_model):
+                if attempt > 0:
+                    yield {
+                        "event": "status",
+                        "data": {
+                            "message": "모델 과부하로 재시도 중입니다...",
+                            "model": model_name,
+                            "attempt": attempt + 1,
+                        },
+                    }
+                try:
+                    data = self._execute_request(model_name, contents, metadata_expression, store_names)
+                    payload = self._build_response_payload(data, store_names, metadata_filters)
+                    yield {"event": "result", "data": payload}
+                    return
+                except GeminiRetryableError as exc:
+                    LOGGER.warning("Gemini model %s retryable error: %s", model_name, exc)
+                    if attempt + 1 < self.max_attempts_per_model:
+                        self._sleep_backoff(attempt)
+                        continue
+                except GeminiClientError as exc:
+                    LOGGER.warning("Gemini model %s failed: %s", model_name, exc)
+                    yield {
+                        "event": "status",
+                        "data": {"message": str(exc), "model": model_name},
+                    }
+                    break
+
+        yield {"event": "error", "data": {"message": "잠시 후 다시 시도해 주세요."}}
+
+    def _execute_request(
+        self,
+        model_name: str,
+        contents: List[Dict[str, Any]],
+        metadata_expression: Optional[str],
+        store_names: List[str],
+    ) -> Dict[str, Any]:
         if not store_names:
             raise GeminiClientError("At least one file search store name is required")
 
-        metadata_expression = _build_metadata_expression(metadata_filters)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+        body: Dict[str, Any] = {
+            "contents": contents,
+            "tools": [
+                {
+                    "fileSearch": {
+                        "fileSearchStoreNames": store_names,
+                    }
+                }
+            ],
+        }
+        if metadata_expression:
+            body["tools"][0]["fileSearch"]["metadataFilter"] = metadata_expression
 
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+        }
+
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(url, headers=headers, json=body)
+        except httpx.TimeoutException as exc:
+            raise GeminiRetryableError("Gemini REST 요청이 타임아웃되었습니다.") from exc
+        except httpx.HTTPError as exc:
+            raise GeminiRetryableError("Gemini REST 요청 중 네트워크 오류가 발생했습니다.") from exc
+
+        if response.status_code >= 400:
+            message = response.text
+            if response.status_code in RETRYABLE_STATUS_CODES:
+                raise GeminiRetryableError(f"Gemini REST error {response.status_code}: {message}")
+            raise GeminiClientError(f"Gemini REST error {response.status_code}: {message}")
+
+        return response.json()
+
+    def _build_contents(self, query: str, conversation_history: Optional[List[str]]) -> List[Dict[str, Any]]:
         history_parts = [
             {
                 "role": "user",
@@ -58,62 +175,34 @@ class GeminiFileSearchClient:
             for entry in (conversation_history or [])
             if isinstance(entry, str) and entry.strip()
         ]
-        contents = history_parts + [
+        return history_parts + [
             {
                 "role": "user",
                 "parts": [{"text": query}],
             }
         ]
 
-        last_error: Optional[Exception] = None
-        for model_name in self.models:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-            
-            # v1beta API 공식 스키마: fileSearch (camelCase) + fileSearchStoreNames
-            file_search_tool: dict[str, Any] = {
-                "fileSearch": {
-                    "fileSearchStoreNames": store_names
-                }
-            }
-            
-            if metadata_expression:
-                file_search_tool["fileSearch"]["metadataFilter"] = metadata_expression
-            
-            body: dict[str, Any] = {
-                "contents": contents,
-                "tools": [file_search_tool],
-            }
+    def _build_response_payload(
+        self,
+        data: Dict[str, Any],
+        store_names: List[str],
+        metadata_filters: Optional[List[MetadataFilter]],
+    ) -> Dict[str, Any]:
+        text = self._extract_text(data)
+        grounding_chunks = self._extract_grounding_chunks(data)
+        return {
+            "text": text or "검색 결과를 가져오지 못했습니다. 다시 시도해 주세요.",
+            "grounding_chunks": grounding_chunks,
+            "store_names": store_names,
+            "applied_filters": metadata_filters or [],
+        }
 
-            headers = {
-                "Content-Type": "application/json",
-                "x-goog-api-key": self.api_key,
-            }
-
-            try:
-                with httpx.Client(timeout=self.timeout) as client:
-                    response = client.post(url, headers=headers, json=body)
-                if response.status_code >= 400:
-                    last_error = GeminiClientError(
-                        f"Gemini REST error {response.status_code}: {response.text}"
-                    )
-                    LOGGER.warning("Gemini REST %s failed: %s", model_name, last_error)
-                    continue
-                data = response.json()
-            except Exception as exc:  # pragma: no cover - 네트워크 오류
-                last_error = exc
-                LOGGER.warning("Gemini REST %s request failed: %s", model_name, exc)
-                continue
-
-            text = self._extract_text(data)
-            grounding_chunks = self._extract_grounding_chunks(data)
-            return {
-                "text": text or "검색 결과를 가져오지 못했습니다. 다시 시도해 주세요.",
-                "grounding_chunks": grounding_chunks,
-                "store_names": store_names,
-                "applied_filters": metadata_filters or [],
-            }
-
-        raise GeminiClientError("Gemini 검색 실패") from last_error
+    def _sleep_backoff(self, attempt: int) -> None:
+        sleep_seconds = min(5.0, self.retry_backoff_seconds * (attempt + 1))
+        try:
+            time.sleep(sleep_seconds)
+        except Exception:  # pragma: no cover
+            pass
 
     def _extract_text(self, payload: dict[str, Any]) -> str:
         text = payload.get("text")
@@ -127,10 +216,9 @@ class GeminiFileSearchClient:
         parts = content.get("parts") or []
         if parts and isinstance(parts[0], dict):
             return str(parts[0].get("text") or "")
-        # 안전 장치: 직렬화 가능한 경우 문자열로 변환
         try:
             return json.dumps(first)
-        except Exception:  # pragma: no cover - 디버그용
+        except Exception:  # pragma: no cover
             return ""
 
     def _extract_grounding_chunks(self, payload: dict[str, Any]) -> List[Any]:
@@ -144,7 +232,6 @@ class GeminiFileSearchClient:
             or metadata.get("grounding_chunks")
             or []
         )
-        # JSON 직렬화 가능한 형태만 돌려주도록 방어
         safe_chunks: List[Any] = []
         for chunk in chunks:
             if isinstance(chunk, (dict, list, str, int, float, bool)) or chunk is None:
@@ -152,7 +239,6 @@ class GeminiFileSearchClient:
                 continue
             try:
                 safe_chunks.append(json.loads(json.dumps(chunk)))
-            except Exception:  # pragma: no cover - 예외적인 타입
+            except Exception:  # pragma: no cover
                 safe_chunks.append(str(chunk))
         return safe_chunks
-

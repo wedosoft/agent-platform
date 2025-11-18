@@ -1,7 +1,9 @@
 from dataclasses import asdict
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+import json
 
 from app.models.session import ChatRequest, ChatResponse
 from app.services.common_chat_handler import CommonChatHandler, get_common_chat_handler
@@ -11,6 +13,10 @@ from app.services.pipeline_client import PipelineClient, PipelineClientError, ge
 from app.services.session_repository import SessionRepository, get_session_repository
 
 router = APIRouter(tags=["chat"])
+
+
+def _format_sse(event: str, data: Dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def _handle_error(exc: PipelineClientError) -> HTTPException:
@@ -98,3 +104,58 @@ def chat(
 
     repository.append_question(request.session_id, request.query)
     return ChatResponse.model_validate(response)
+
+
+@router.get("/chat/stream")
+def chat_stream(
+    session_id: str = Query(..., alias="sessionId"),
+    query: str = Query(...),
+    rag_store_name: Optional[str] = Query(None, alias="ragStoreName"),
+    sources: Optional[List[str]] = Query(None, alias="sources"),
+    common_product: Optional[str] = Query(None, alias="commonProduct"),
+    clarification_option: Optional[str] = Query(None, alias="clarificationOption"),
+    pipeline: PipelineClient = Depends(get_pipeline_client),
+    repository: SessionRepository = Depends(get_session_repository),
+    common_handler: Optional[CommonChatHandler] = Depends(get_common_chat_handler),
+) -> StreamingResponse:
+    request = ChatRequest(
+        sessionId=session_id,
+        query=query,
+        ragStoreName=rag_store_name,
+        sources=sources or None,
+        commonProduct=common_product,
+        clarificationOption=clarification_option,
+    )
+
+    session = repository.get(request.session_id)
+    if not session:
+        try:
+            session = pipeline.get_session(request.session_id)
+        except PipelineClientError as exc:
+            raise _handle_error(exc)
+        repository.save(session)
+
+    conversation_history = session.get("questionHistory") if isinstance(session, dict) else []
+    history_texts: List[str] = []
+    if isinstance(conversation_history, list):
+        snapshots = [str(entry) for entry in conversation_history if isinstance(entry, str)]
+        history_texts = snapshots[-2:]
+
+    def event_stream():
+        if not common_handler or not common_handler.can_handle(request):
+            yield _format_sse("error", {"message": "현재 공통 문서 질문만 지원합니다."})
+            return
+
+        terminal_event_sent = False
+        for event in common_handler.stream_handle(request, history=history_texts):
+            yield _format_sse(event["event"], event["data"])
+            if event["event"] == "result":
+                terminal_event_sent = True
+                repository.append_question(request.session_id, request.query)
+            if event["event"] == "error":
+                terminal_event_sent = True
+                break
+        if not terminal_event_sent:
+            yield _format_sse("error", {"message": "잠시 후 다시 시도해 주세요."})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

@@ -61,6 +61,42 @@ class CommonChatHandler:
         }
         return ChatResponse.model_validate(payload)
 
+    def stream_handle(self, request: ChatRequest, *, history: Optional[List[str]] = None):
+        metadata_filters: List[MetadataFilter] = []
+        filter_summaries: List[str] = []
+        if request.common_product:
+            metadata_filters.append(MetadataFilter(key="product", value=request.common_product, operator="EQUALS"))
+            filter_summaries.append(f"제품={request.common_product}")
+
+        def generator():
+            try:
+                for event in self.gemini_client.stream_search(
+                    query=request.query,
+                    store_names=[self.store_name],
+                    metadata_filters=metadata_filters,
+                    conversation_history=history,
+                ):
+                    if event["event"] == "result":
+                        payload = event["data"]
+                        payload.update(
+                            {
+                                "ragStoreName": self.store_name,
+                                "sources": [self.store_name],
+                                "filters": filter_summaries,
+                                "knownContext": {},
+                            }
+                        )
+                        yield {"event": "result", "data": payload}
+                    else:
+                        yield event
+            except GeminiClientError as exc:
+                yield {
+                    "event": "error",
+                    "data": {"message": str(exc) or "잠시 후 다시 시도해 주세요."},
+                }
+
+        return generator()
+
 
 def get_common_chat_handler() -> Optional[CommonChatHandler]:
     settings = get_settings()
