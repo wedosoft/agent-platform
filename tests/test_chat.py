@@ -6,6 +6,7 @@ from app.models.metadata import MetadataFilter
 from app.models.session import ChatResponse
 from app.services.common_chat_handler import get_common_chat_handler
 from app.services.query_filter_analyzer import get_query_filter_analyzer
+from app.services.ticket_chat_handler import get_ticket_chat_handler
 
 
 def test_chat_flow(test_client: TestClient, override_pipeline_client):
@@ -106,3 +107,44 @@ def test_chat_includes_analyzer_clarification(test_client: TestClient, override_
     assert data["filters"] == ["우선순위=긴급"]
 
     app.dependency_overrides.pop(get_query_filter_analyzer, None)
+
+
+def test_ticket_handler_path(test_client: TestClient, override_pipeline_client):
+    session_id = test_client.post("/api/session").json()["sessionId"]
+    override_pipeline_client.sessions[session_id] = {
+        "sessionId": session_id,
+        "createdAt": "2025-01-01T00:00:00Z",
+        "updatedAt": "2025-01-01T00:00:00Z",
+        "questionHistory": [],
+    }
+
+    class StubTicketHandler:
+        def can_handle(self, request):  # pragma: no cover - stub
+            return True
+
+        def handle(self, request, history):  # pragma: no cover - stub
+            return (
+                {
+                    "text": "ticket response",
+                    "groundingChunks": [],
+                    "ragStoreName": "ticket-store",
+                    "sources": request.sources,
+                    "filters": ["우선순위=긴급"],
+                    "filterConfidence": "high",
+                    "clarificationNeeded": False,
+                },
+                None,
+            )
+
+    app.dependency_overrides[get_ticket_chat_handler] = lambda: StubTicketHandler()
+
+    payload = {
+        "sessionId": session_id,
+        "query": "티켓",
+        "sources": ["ticket-store"],
+    }
+    response = test_client.post("/api/chat", json=payload)
+    assert response.status_code == 200
+    assert response.json()["text"] == "ticket response"
+
+    app.dependency_overrides.pop(get_ticket_chat_handler, None)

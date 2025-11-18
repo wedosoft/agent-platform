@@ -8,6 +8,7 @@ from app.services import common_documents as common_documents_module
 from app.services import pipeline_client as pipeline_client_module
 from app.services import session_repository as session_repository_module
 from app.services.common_chat_handler import get_common_chat_handler
+from app.services.ticket_chat_handler import get_ticket_chat_handler
 
 
 class DummyPipelineClient:
@@ -114,3 +115,10 @@ def disable_common_chat_handler():
     app.dependency_overrides[get_common_chat_handler] = lambda: None
     yield
     app.dependency_overrides.pop(get_common_chat_handler, None)
+
+
+@pytest.fixture(autouse=True)
+def disable_ticket_chat_handler():
+    app.dependency_overrides[get_ticket_chat_handler] = lambda: None
+    yield
+    app.dependency_overrides.pop(get_ticket_chat_handler, None)

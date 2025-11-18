@@ -3,12 +3,14 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
+from dataclasses import asdict
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, status
 from redis import Redis
 
 from app.core.config import get_settings
+from app.models.analyzer import AnalyzerResult
 
 
 SessionRecord = Dict[str, Any]
@@ -28,6 +30,10 @@ class SessionRepository(ABC):
 
     @abstractmethod
     def append_question(self, session_id: str, question: str) -> Optional[SessionRecord]:
+        ...
+
+    @abstractmethod
+    def record_analyzer_result(self, session_id: str, result: AnalyzerResult) -> None:
         ...
 
     def normalize(self, payload: Dict[str, Any]) -> SessionRecord:
@@ -80,6 +86,28 @@ class InMemorySessionRepository(SessionRepository):
         self.save(record)
         return record
 
+    def record_analyzer_result(self, session_id: str, result: AnalyzerResult) -> None:
+        record = self.get(session_id)
+        if not record:
+            return
+        responses = record.setdefault("analyzerResponses", [])
+        snapshot = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "filters": [asdict(filter_) for filter_ in result.filters],
+            "summaries": result.summaries,
+            "confidence": result.confidence,
+            "clarificationNeeded": result.clarification_needed,
+            "clarification": asdict(result.clarification) if result.clarification else None,
+        }
+        responses.append(snapshot)
+        record["knownContext"] = result.known_context
+        if result.clarification_needed:
+            record["clarificationState"] = {
+                "message": result.clarification.message if result.clarification else None,
+                "options": result.clarification.options if result.clarification else None,
+            }
+        self.save(record)
+
 
 class RedisSessionRepository(SessionRepository):
     def __init__(self, redis_client: Redis, prefix: str, ttl_seconds: int) -> None:
@@ -114,6 +142,28 @@ class RedisSessionRepository(SessionRepository):
         record["updatedAt"] = datetime.now(timezone.utc).isoformat()
         self.save(record)
         return record
+
+    def record_analyzer_result(self, session_id: str, result: AnalyzerResult) -> None:
+        record = self.get(session_id)
+        if not record:
+            return
+        responses = record.setdefault("analyzerResponses", [])
+        snapshot = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "filters": [asdict(filter_) for filter_ in result.filters],
+            "summaries": result.summaries,
+            "confidence": result.confidence,
+            "clarificationNeeded": result.clarification_needed,
+            "clarification": asdict(result.clarification) if result.clarification else None,
+        }
+        responses.append(snapshot)
+        record["knownContext"] = result.known_context
+        if result.clarification_needed:
+            record["clarificationState"] = {
+                "message": result.clarification.message if result.clarification else None,
+                "options": result.clarification.options if result.clarification else None,
+            }
+        self.save(record)
 
 
 def _build_redis_client(url: str) -> Redis:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import List, Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     gemini_primary_model: str = "gemini-2.5-flash"
     gemini_fallback_model: Optional[str] = "gemini-1.5-flash-latest"
     gemini_common_store_name: Optional[str] = None
+    gemini_ticket_store_names: List[str] = Field(default_factory=list)
     freshdesk_domain: Optional[str] = None
     freshdesk_api_key: Optional[str] = None
     supabase_common_url: Optional[str] = Field(default=None, alias="supabase_common_url")
@@ -44,6 +45,15 @@ class Settings(BaseSettings):
         env_file=(".env", ".env.local"),
         env_file_encoding="utf-8",
     )
+
+    @field_validator("gemini_ticket_store_names", mode="before")
+    @classmethod
+    def split_ticket_stores(cls, value):
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if value is None:
+            return []
+        return value
 
 
 @lru_cache

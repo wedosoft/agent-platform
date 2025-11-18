@@ -1,5 +1,3 @@
-from typing import Optional
-
 from dataclasses import asdict
 from typing import Optional
 
@@ -8,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.models.session import ChatRequest, ChatResponse
 from app.services.common_chat_handler import CommonChatHandler, get_common_chat_handler
 from app.services.query_filter_analyzer import QueryFilterAnalyzer, get_query_filter_analyzer
+from app.services.ticket_chat_handler import TicketChatHandler, get_ticket_chat_handler
 from app.services.pipeline_client import PipelineClient, PipelineClientError, get_pipeline_client
 from app.services.session_repository import SessionRepository, get_session_repository
 
@@ -25,6 +24,7 @@ def chat(
     repository: SessionRepository = Depends(get_session_repository),
     common_handler: Optional[CommonChatHandler] = Depends(get_common_chat_handler),
     analyzer: Optional[QueryFilterAnalyzer] = Depends(get_query_filter_analyzer),
+    ticket_handler: Optional[TicketChatHandler] = Depends(get_ticket_chat_handler),
 ) -> ChatResponse:
     session = repository.get(request.session_id)
     if not session:
@@ -43,6 +43,16 @@ def chat(
         response = common_handler.handle(request, history=history_texts)
         repository.append_question(request.session_id, request.query)
         return response
+
+    if ticket_handler and ticket_handler.can_handle(request):
+        payload, ticket_result = ticket_handler.handle(
+            request,
+            history=history_texts,
+        )
+        if ticket_result:
+            repository.record_analyzer_result(request.session_id, ticket_result)
+        repository.append_question(request.session_id, request.query)
+        return ChatResponse.model_validate(payload)
 
     analyzer_result = analyzer.analyze(request.query) if analyzer else None
 
@@ -70,6 +80,7 @@ def chat(
             response["clarification"] = asdict(analyzer_result.clarification)
         if analyzer_result.confidence and not response.get("filterConfidence"):
             response["filterConfidence"] = analyzer_result.confidence
+        repository.record_analyzer_result(request.session_id, analyzer_result)
 
     repository.append_question(request.session_id, request.query)
     return ChatResponse.model_validate(response)
