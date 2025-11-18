@@ -16,6 +16,16 @@ class Settings(BaseSettings):
     pipeline_base_url: str = "http://localhost:4000/pipeline"
     redis_url: Optional[str] = None
     redis_session_prefix: str = "agent-platform-session"
+    supabase_common_url: Optional[str] = None
+    supabase_common_service_role_key: Optional[str] = None
+    supabase_common_table_name: str = "documents"
+    supabase_common_default_product: Optional[str] = None
+    supabase_common_batch_size: int = 50
+    supabase_common_languages: str = "ko,en"
+    gemini_api_key: Optional[str] = None
+    gemini_primary_model: str = "gemini-2.5-flash"
+    gemini_fallback_model: Optional[str] = "gemini-1.5-flash-latest"
+    gemini_common_store_name: Optional[str] = None
     supabase_common_url: Optional[str] = Field(default=None, alias="supabase_common_url")
     supabase_common_service_role_key: Optional[str] = Field(default=None, alias="supabase_common_service_role_key")
     supabase_common_table_name: str = "documents"

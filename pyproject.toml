@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     "redis>=5.0.8",
     "supabase>=2.6.0",
+    "google-genai>=1.47.0",
 ]
 
 [project.optional-dependencies]

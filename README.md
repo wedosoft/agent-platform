@@ -10,7 +10,7 @@ source venv/bin/activate
 pip install -e '.[dev]'
 ```
 
-로컬 개발 시 비밀 값은 `.env.local`에 저장하고, `.env.local.example`을 복사해 기본 값을 채운 뒤 필요에 맞게 수정하세요.
+로컬 개발 시 비밀 값은 `.env.local`에 저장하고, `.env.local.example`을 복사해 기본 값을 채운 뒤 필요에 맞게 수정하세요. Supabase 공통 문서 프로젝트 URL/Service Role Key를 제공해야 `/api/common-products`, `/api/common-documents`가 동작합니다. 또한 `GEMINI_API_KEY`(또는 `AGENT_PLATFORM_GEMINI_API_KEY`)와 `AGENT_PLATFORM_GEMINI_COMMON_STORE_NAME`을 지정하면 `/api/chat`이 공통 문서 전용 질문을 FastAPI만으로 처리합니다.
 
 ## 실행
 
@@ -41,6 +41,7 @@ Fly.io에서 Redis 애드온을 사용할 경우 `AGENT_PLATFORM_REDIS_URL`을 �
 - `POST /api/chat`
 - `GET /api/status`
 - `GET /api/common-products`
+- `GET /api/common-documents`
 - `POST /api/sync`
 
 ## 다음 단계

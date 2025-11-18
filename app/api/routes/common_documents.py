@@ -3,9 +3,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.models.common_documents import (
+    CommonDocumentCursor,
     CommonDocumentCursorModel,
     CommonDocumentFetchResponse,
-    CommonDocumentsQuery,
     CommonProductsResponse,
 )
 from app.services.common_documents import (
@@ -43,21 +43,23 @@ def fetch_common_documents(
     updated_since: Optional[str] = Query(None, alias="updatedSince"),
     service: CommonDocumentsService = Depends(get_common_documents_service),
 ) -> CommonDocumentFetchResponse:
-    cursor: Optional[CommonDocumentCursorModel] = None
+    cursor: Optional[CommonDocumentCursor] = None
     if cursor_id is not None and cursor_updated_at:
-        cursor = CommonDocumentCursorModel(id=cursor_id, updated_at=cursor_updated_at)
+        cursor = CommonDocumentCursor(id=cursor_id, updated_at=cursor_updated_at)
 
     try:
         result = service.fetch_documents(
             limit=limit,
             product=product,
-            cursor=cursor.dict(by_alias=True) if cursor else None,
+            cursor=cursor,
             updated_since=updated_since,
         )
     except CommonDocumentsError as exc:
         raise _handle_error(exc)
 
     return CommonDocumentFetchResponse(
-        records=result["records"],
-        cursor=result.get("cursor"),
+        records=result.records,
+        cursor=CommonDocumentCursorModel.from_dataclass(result.cursor)
+        if result.cursor
+        else None,
     )

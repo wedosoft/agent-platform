@@ -3,8 +3,11 @@ from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
 from app.main import app
+from app.models.common_documents import CommonDocumentCursor, CommonDocumentsFetchResult
+from app.services import common_documents as common_documents_module
 from app.services import pipeline_client as pipeline_client_module
 from app.services import session_repository as session_repository_module
+from app.services.common_chat_handler import get_common_chat_handler
 
 
 class DummyPipelineClient:
@@ -65,12 +68,31 @@ class DummyPipelineClient:
         }
 
 
+class DummyCommonDocumentsService:
+    def list_products(self):
+        return ["제품A", "제품B"]
+
+    def fetch_documents(self, **_kwargs):
+        return CommonDocumentsFetchResult(
+            records=[{"id": 123, "updated_at": "2025-01-01T00:00:00Z"}],
+            cursor=CommonDocumentCursor(id=999, updated_at="2025-01-01T00:00:00Z"),
+        )
+
+
 @pytest.fixture(autouse=True)
 def override_pipeline_client():
     dummy = DummyPipelineClient()
     app.dependency_overrides[pipeline_client_module.get_pipeline_client] = lambda: dummy
     yield dummy
     app.dependency_overrides.pop(pipeline_client_module.get_pipeline_client, None)
+
+
+@pytest.fixture(autouse=True)
+def override_common_documents_service():
+    dummy = DummyCommonDocumentsService()
+    app.dependency_overrides[common_documents_module.get_common_documents_service] = lambda: dummy
+    yield dummy
+    app.dependency_overrides.pop(common_documents_module.get_common_documents_service, None)
 
 
 @pytest.fixture()
@@ -85,3 +107,10 @@ def override_session_repository():
     app.dependency_overrides[session_repository_module.get_session_repository] = lambda: repo
     yield repo
     app.dependency_overrides.pop(session_repository_module.get_session_repository, None)
+
+
+@pytest.fixture(autouse=True)
+def disable_common_chat_handler():
+    app.dependency_overrides[get_common_chat_handler] = lambda: None
+    yield
+    app.dependency_overrides.pop(get_common_chat_handler, None)

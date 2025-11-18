@@ -1,55 +1,111 @@
-from typing import List
+from __future__ import annotations
 
-from app.models.common_documents import (
+from dataclasses import dataclass
+from types import SimpleNamespace
+from typing import Iterator, List
+
+import pytest
+
+from app.models.common_documents import CommonDocumentCursor
+from app.services.common_documents import (
     CommonDocumentsConfig,
-    CommonDocumentRecord,
-    CommonDocumentsFetchOptions,
+    CommonDocumentsError,
+    CommonDocumentsService,
 )
-from app.services.common_documents import CommonDocumentsService, CommonDocumentsRepository
 
 
-class DummyRepository(CommonDocumentsRepository):
-    def __init__(self) -> None:
-        self.records: List[CommonDocumentRecord] = []
-
-    def fetch_documents(self, options: CommonDocumentsFetchOptions):  # pragma: no cover - unused in chunk tests
-        return None
-
-    def count_documents(self, product=None):  # pragma: no cover - unused in chunk tests
-        return 0
-
-    def list_products(self):  # pragma: no cover - unused in chunk tests
-        return []
+@dataclass
+class StubResponse:
+    data: List[dict]
+    count: int | None = None
+    error: Exception | None = None
 
 
-def build_service(summary_enabled: bool = False) -> CommonDocumentsService:
-    config = CommonDocumentsConfig(
+class StubQuery:
+    def __init__(self, responses: Iterator[StubResponse]):
+        self.responses = responses
+
+    def select(self, *_args, **_kwargs):
+        return self
+
+    def order(self, *_args, **_kwargs):
+        return self
+
+    def limit(self, *_args, **_kwargs):
+        return self
+
+    def eq(self, *_args, **_kwargs):
+        return self
+
+    def or_(self, *_args, **_kwargs):
+        return self
+
+    def gte(self, *_args, **_kwargs):
+        return self
+
+    def range(self, *_args, **_kwargs):
+        return self
+
+    def execute(self):
+        try:
+            response = next(self.responses)
+        except StopIteration:  # pragma: no cover - indicates broken test setup
+            raise AssertionError("No more responses available")
+        return SimpleNamespace(data=response.data, count=response.count, error=response.error)
+
+
+class StubSupabaseClient:
+    def __init__(self, responses: List[StubResponse]):
+        self._responses = iter(responses)
+
+    def table(self, _name: str):
+        return StubQuery(self._responses)
+
+
+@pytest.fixture
+def common_config() -> CommonDocumentsConfig:
+    return CommonDocumentsConfig(
         url="https://example.supabase.co",
-        serviceRoleKey="key",
-        batchSize=2,
-        languages=["ko"],
-        summaryEnabled=summary_enabled,
+        service_role_key="service-key",
+        table_name="documents",
+        batch_size=2,
     )
-    repo = DummyRepository()
-    return CommonDocumentsService(repo, config)
 
 
-def test_to_chunks_skips_missing_content():
-    service = build_service()
-    records = [
-        {"id": 1, "title_ko": "제목", "content_text_en": "hello"},
-        {"id": 2, "title_ko": "", "content_text_ko": "본문"},
+def test_fetch_documents_returns_cursor(common_config: CommonDocumentsConfig):
+    responses = [
+        StubResponse(
+            data=[
+                {"id": 1, "updated_at": "2025-01-01T00:00:00Z"},
+                {"id": 2, "updated_at": "2025-01-02T00:00:00Z"},
+            ]
+        )
     ]
-    chunks = service.to_chunks(records)
-    assert chunks == []
+    service = CommonDocumentsService(common_config, client=StubSupabaseClient(responses))
+    result = service.fetch_documents(limit=2)
+    assert len(result.records) == 2
+    assert isinstance(result.cursor, CommonDocumentCursor)
+    assert result.cursor.id == 2
+    assert result.cursor.updated_at == "2025-01-02T00:00:00Z"
 
 
-def test_to_chunks_generates_chunks_with_overlap():
-    service = build_service(summary_enabled=True)
-    text = "0123456789" * 30
-    record = {"id": 10, "title_ko": "제목", "content_text_ko": text, "product": "공통"}
-    chunks = service.to_chunks([record], languages=["ko"])
-    assert chunks, "chunk list should not be empty"
-    assert chunks[0].metadata["documentId"] == 10
-    assert chunks[0].metadata["language"] == "ko"
-    assert chunks[0].summary
+def test_count_documents_uses_response_count(common_config: CommonDocumentsConfig):
+    responses = [StubResponse(data=[], count=42)]
+    service = CommonDocumentsService(common_config, client=StubSupabaseClient(responses))
+    assert service.count_documents() == 42
+
+
+def test_list_products_deduplicates(common_config: CommonDocumentsConfig):
+    responses = [
+        StubResponse(data=[{"product": "Alpha"}, {"product": "beta"}, {"product": "Alpha"}]),
+        StubResponse(data=[]),
+    ]
+    service = CommonDocumentsService(common_config, client=StubSupabaseClient(responses))
+    assert service.list_products() == ["Alpha", "beta"]
+
+
+def test_service_raises_on_supabase_error(common_config: CommonDocumentsConfig):
+    responses = [StubResponse(data=[], error=Exception("boom"))]
+    service = CommonDocumentsService(common_config, client=StubSupabaseClient(responses))
+    with pytest.raises(CommonDocumentsError):
+        service.fetch_documents()

@@ -1,6 +1,9 @@
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.models.session import ChatRequest, ChatResponse
+from app.services.common_chat_handler import CommonChatHandler, get_common_chat_handler
 from app.services.pipeline_client import PipelineClient, PipelineClientError, get_pipeline_client
 from app.services.session_repository import SessionRepository, get_session_repository
 
@@ -16,6 +19,7 @@ def chat(
     request: ChatRequest,
     pipeline: PipelineClient = Depends(get_pipeline_client),
     repository: SessionRepository = Depends(get_session_repository),
+    common_handler: Optional[CommonChatHandler] = Depends(get_common_chat_handler),
 ) -> ChatResponse:
     session = repository.get(request.session_id)
     if not session:
@@ -24,6 +28,16 @@ def chat(
         except PipelineClientError as exc:
             raise _handle_error(exc)
         repository.save(session)
+
+    conversation_history = session.get("questionHistory") if isinstance(session, dict) else []
+    history_texts = []
+    if isinstance(conversation_history, list):
+        history_texts = [str(entry) for entry in conversation_history if isinstance(entry, str)]
+
+    if common_handler and common_handler.can_handle(request):
+        response = common_handler.handle(request, history=history_texts)
+        repository.append_question(request.session_id, request.query)
+        return response
 
     payload = {
         "query": request.query,
