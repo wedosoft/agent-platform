@@ -32,11 +32,20 @@ class FreshdeskClient:
     async def get_ticket_fields(self) -> List[dict[str, Any]]:
         return await self._request("GET", "/ticket_fields")
 
-    async def _request(self, method: str, path: str) -> Any:
+    async def search_tickets(self, query: str) -> dict[str, Any]:
+        return await self._request("GET", "/search/tickets", params={"query": query})
+
+    async def search_contacts(self, query: str) -> dict[str, Any]:
+        return await self._request("GET", "/search/contacts", params={"query": query})
+
+    async def search_agents(self, query: str) -> dict[str, Any]:
+        return await self._request("GET", "/search/agents", params={"query": query})
+
+    async def _request(self, method: str, path: str, params: Optional[dict[str, Any]] = None) -> Any:
         url = f"{self.base_url}{path}"
         auth = (self.api_key, "X")
         async with httpx.AsyncClient(timeout=self.timeout, auth=auth) as client:
-            response = await client.request(method, url)
+            response = await client.request(method, url, params=params)
         if response.status_code >= 400:
             raise FreshdeskClientError(
                 f"Freshdesk API {method} {path} failed: {response.status_code} {response.text}"

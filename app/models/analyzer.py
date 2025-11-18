@@ -12,6 +12,8 @@ class AnalyzerClarification:
     follow_up_prompt: Optional[str] = None
     message: Optional[str] = None
     options: Optional[List[str]] = None
+    field: Optional[str] = None
+    pending_filter: Optional[MetadataFilter] = None
 
 
 @dataclass

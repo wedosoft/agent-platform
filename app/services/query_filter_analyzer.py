@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 from datetime import datetime, timedelta, timezone
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from functools import lru_cache
 
@@ -38,9 +38,16 @@ class QueryFilterAnalyzer:
                 fallback_model=settings.gemini_fallback_model,
             )
 
-    def analyze(self, query: str) -> AnalyzerResult:
+    def analyze(
+        self,
+        query: str,
+        *,
+        clarification_option: Optional[str] = None,
+        clarification_state: Optional[dict] = None,
+    ) -> AnalyzerResult:
         if not self.llm_client:
-            return self._fallback_result()
+            result = self._fallback_result()
+            return asyncio.run(self._apply_clarification_choice(result, clarification_option, clarification_state))
         clarifications = []
         try:
             prompt = self._build_prompt(query)
@@ -52,7 +59,7 @@ class QueryFilterAnalyzer:
             filters, summaries = self._parse_response(text)
             filters, clarifications = asyncio.run(self._normalize_with_metadata(filters))
             if not filters and clarifications:
-                return AnalyzerResult(
+                result = AnalyzerResult(
                     filters=[],
                     summaries=[],
                     success=True,
@@ -61,9 +68,15 @@ class QueryFilterAnalyzer:
                     clarification=clarifications[0],
                     known_context={},
                 )
+                return asyncio.run(
+                    self._apply_clarification_choice(result, clarification_option, clarification_state)
+                )
             if not filters:
-                return self._fallback_result(message="LLM 필터 추출 실패. 기본 필터 적용")
-            return AnalyzerResult(
+                result = self._fallback_result(message="LLM 필터 추출 실패. 기본 필터 적용")
+                return asyncio.run(
+                    self._apply_clarification_choice(result, clarification_option, clarification_state)
+                )
+            result = AnalyzerResult(
                 filters=filters,
                 summaries=summaries,
                 success=True,
@@ -72,8 +85,14 @@ class QueryFilterAnalyzer:
                 clarification=clarifications[0] if clarifications else None,
                 known_context={},
             )
+            return asyncio.run(
+                self._apply_clarification_choice(result, clarification_option, clarification_state)
+            )
         except Exception:
-            return self._fallback_result(message="LLM 호출 실패. 기본 필터 적용")
+            result = self._fallback_result(message="LLM 호출 실패. 기본 필터 적용")
+            return asyncio.run(
+                self._apply_clarification_choice(result, clarification_option, clarification_state)
+            )
 
     def _build_prompt(self, query: str) -> str:
         return (
@@ -117,6 +136,7 @@ class QueryFilterAnalyzer:
                         reason="INVALID_PRIORITY",
                         message="인식할 수 없는 우선순위입니다. 아래 옵션 중에서 선택해 주세요.",
                         options=options,
+                        field="priority",
                     )
                 )
                 continue
@@ -131,6 +151,7 @@ class QueryFilterAnalyzer:
                         reason="INVALID_STATUS",
                         message="인식할 수 없는 상태 값입니다. 아래 옵션 중에서 선택해 주세요.",
                         options=options,
+                        field="status",
                     )
                 )
                 continue
@@ -157,6 +178,70 @@ class QueryFilterAnalyzer:
             operator="GREATER_THAN",
             value=cutoff.isoformat(),
         )
+
+    async def _apply_clarification_choice(
+        self,
+        result: AnalyzerResult,
+        clarification_option: Optional[str],
+        clarification_state: Optional[dict],
+    ) -> AnalyzerResult:
+        if not clarification_option or not clarification_state:
+            return result
+        payload = self._extract_clarification_payload(clarification_state)
+        if not payload:
+            return result
+        field = payload.get("field") or self._reason_to_field(payload.get("reason"))
+        if not field:
+            return result
+        option_value = clarification_option.strip()
+        if not option_value:
+            return result
+        filter_from_choice = await self._build_filter_from_choice(field, option_value)
+        if not filter_from_choice:
+            return result
+        result.filters = [f for f in result.filters if f.key != filter_from_choice.key]
+        result.filters.append(filter_from_choice)
+        label = field.capitalize()
+        summary = f"{label}={option_value}"
+        result.summaries.append(summary)
+        result.clarification_needed = False
+        result.clarification = None
+        result.confidence = "medium"
+        result.known_context[field] = option_value
+        return result
+
+    def _extract_clarification_payload(self, state: dict) -> Optional[Dict[str, str]]:
+        if not isinstance(state, dict):
+            return None
+        payload = state.get("clarification") or state.get("clarifications") or state
+        if isinstance(payload, list) and payload:
+            payload = payload[0]
+        if not isinstance(payload, dict):
+            return None
+        return {
+            "reason": payload.get("reason"),
+            "field": payload.get("field"),
+        }
+
+    def _reason_to_field(self, reason: Optional[str]) -> Optional[str]:
+        mapping = {
+            "INVALID_PRIORITY": "priority",
+            "INVALID_STATUS": "status",
+        }
+        return mapping.get(reason) if reason else None
+
+    async def _build_filter_from_choice(self, field: str, option_value: str) -> Optional[MetadataFilter]:
+        if field == "priority":
+            code = await self.metadata_service.resolve_priority_label(option_value)
+            if code is None:
+                return None
+            return MetadataFilter(key="priority", operator="EQUALS", value=str(code))
+        if field == "status":
+            code = await self.metadata_service.resolve_status_label(option_value)
+            if code is None:
+                return None
+            return MetadataFilter(key="status", operator="EQUALS", value=str(code))
+        return None
 
 
 @lru_cache

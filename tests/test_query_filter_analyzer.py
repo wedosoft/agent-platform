@@ -58,3 +58,21 @@ def test_query_filter_analyzer_requires_clarification(monkeypatch):
     result = analyzer.analyze("이상한 우선순위")
     assert result.clarification_needed is True
     assert result.clarification and "옵션" in result.clarification.message
+
+
+def test_query_filter_analyzer_applies_follow_up_choice():
+    analyzer = QueryFilterAnalyzer(metadata_service=FakeMetadataService())
+    analyzer.llm_client = None  # force fallback path
+    clarification_state = {
+        "clarification": {
+            "field": "priority",
+            "reason": "INVALID_PRIORITY",
+        }
+    }
+    result = analyzer.analyze(
+        "최근 티켓",
+        clarification_option="Urgent",
+        clarification_state=clarification_state,
+    )
+    assert any(filter_.key == "priority" and filter_.value == "4" for filter_ in result.filters)
+    assert result.clarification_needed is False

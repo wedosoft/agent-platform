@@ -77,7 +77,7 @@ def test_chat_includes_analyzer_clarification(test_client: TestClient, override_
     }
 
     class StubAnalyzer:
-        def analyze(self, query):  # pragma: no cover - simple stub
+        def analyze(self, query, **kwargs):  # pragma: no cover - simple stub
             return AnalyzerResult(
                 filters=[MetadataFilter(key="priority", value="4", operator="EQUALS")],
                 summaries=["우선순위=긴급"],
@@ -122,7 +122,7 @@ def test_ticket_handler_path(test_client: TestClient, override_pipeline_client):
         def can_handle(self, request):  # pragma: no cover - stub
             return True
 
-        def handle(self, request, history):  # pragma: no cover - stub
+        def handle(self, request, history, clarification_state=None):  # pragma: no cover - stub
             return (
                 {
                     "text": "ticket response",

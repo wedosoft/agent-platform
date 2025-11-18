@@ -101,11 +101,13 @@ class InMemorySessionRepository(SessionRepository):
         }
         responses.append(snapshot)
         record["knownContext"] = result.known_context
-        if result.clarification_needed:
+        if result.clarification_needed and result.clarification:
             record["clarificationState"] = {
-                "message": result.clarification.message if result.clarification else None,
-                "options": result.clarification.options if result.clarification else None,
+                "clarification": asdict(result.clarification),
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
             }
+        else:
+            record.pop("clarificationState", None)
         self.save(record)
 
 
@@ -158,11 +160,13 @@ class RedisSessionRepository(SessionRepository):
         }
         responses.append(snapshot)
         record["knownContext"] = result.known_context
-        if result.clarification_needed:
+        if result.clarification_needed and result.clarification:
             record["clarificationState"] = {
-                "message": result.clarification.message if result.clarification else None,
-                "options": result.clarification.options if result.clarification else None,
+                "clarification": asdict(result.clarification),
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
             }
+        else:
+            record.pop("clarificationState", None)
         self.save(record)
 
 

@@ -38,6 +38,7 @@ class ChatRequest(BaseModel):
     rag_store_name: Optional[str] = Field(default=None, alias="ragStoreName")
     sources: Optional[List[str]] = None
     common_product: Optional[str] = Field(default=None, alias="commonProduct")
+    clarification_option: Optional[str] = Field(default=None, alias="clarificationOption")
 
 
 class ChatResponse(BaseModel):
@@ -54,4 +55,4 @@ class ChatResponse(BaseModel):
     clarification: Optional[dict] = None
     known_context: Optional[dict] = Field(default=None, alias="knownContext")
     freshdesk_search_plan: Optional[dict] = Field(default=None, alias="freshdeskSearchPlan")
-    freshdesk_tickets: Optional[dict] = Field(default=None, alias="freshdeskTickets")
+    freshdesk_tickets: Optional[List[dict]] = Field(default=None, alias="freshdeskTickets")

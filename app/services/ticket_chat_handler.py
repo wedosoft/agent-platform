@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from typing import List, Optional
 
@@ -9,9 +10,15 @@ from fastapi import HTTPException, status
 
 from app.core.config import get_settings
 from app.models.analyzer import AnalyzerResult
+from app.models.metadata import MetadataFilter
 from app.models.session import ChatRequest
 from app.services.gemini_client import GeminiClient, GeminiClientError
 from app.services.query_filter_analyzer import QueryFilterAnalyzer, get_query_filter_analyzer
+from app.services.freshdesk_search_service import (
+    FreshdeskSearchService,
+    FreshdeskSearchResult,
+    get_freshdesk_search_service,
+)
 
 
 class TicketChatHandler:
@@ -21,10 +28,12 @@ class TicketChatHandler:
         gemini_client: GeminiClient,
         analyzer: QueryFilterAnalyzer,
         ticket_store_names: List[str],
+        search_service: Optional[FreshdeskSearchService] = None,
     ) -> None:
         self.gemini_client = gemini_client
         self.analyzer = analyzer
         self.ticket_store_names = ticket_store_names
+        self.search_service = search_service
 
     def can_handle(self, request: ChatRequest) -> bool:
         if not self.ticket_store_names or not self.analyzer.llm_client:
@@ -39,8 +48,27 @@ class TicketChatHandler:
         request: ChatRequest,
         *,
         history: List[str],
+        clarification_state: Optional[dict] = None,
     ) -> tuple[dict, AnalyzerResult]:
-        analyzer_result = self.analyzer.analyze(request.query)
+        analyzer_result = self.analyzer.analyze(
+            request.query,
+            clarification_option=request.clarification_option,
+            clarification_state=clarification_state,
+        )
+        freshdesk_tickets = []
+        search_plan = None
+        if self.search_service:
+            search_result = asyncio.run(self.search_service.search_with_filters(analyzer_result))
+            freshdesk_tickets = search_result.tickets
+            search_plan = search_result.plan
+            if search_result.ticket_ids:
+                ticket_filter = MetadataFilter(
+                    key="sourceId",
+                    operator="IN",
+                    value=",".join(str(tid) for tid in search_result.ticket_ids[:20]),
+                )
+                analyzer_result.filters.append(ticket_filter)
+                analyzer_result.summaries.append(f"티켓ID={len(search_result.ticket_ids)}개")
         store_names = request.sources or self.ticket_store_names
         try:
             gemini_response = self.gemini_client.search(
@@ -61,6 +89,8 @@ class TicketChatHandler:
             "filterConfidence": analyzer_result.confidence,
             "clarificationNeeded": analyzer_result.clarification_needed,
             "clarification": asdict(analyzer_result.clarification) if analyzer_result.clarification else None,
+            "freshdeskTickets": freshdesk_tickets,
+            "freshdeskSearchPlan": search_plan,
         }
         return payload, analyzer_result
 
@@ -76,6 +106,7 @@ def get_ticket_chat_handler() -> Optional[TicketChatHandler]:
         return None
     if not settings.gemini_api_key:
         return None
+    search_service = get_freshdesk_search_service()
     client = GeminiClient(
         api_key=settings.gemini_api_key,
         primary_model=settings.gemini_primary_model,
@@ -85,4 +116,5 @@ def get_ticket_chat_handler() -> Optional[TicketChatHandler]:
         gemini_client=client,
         analyzer=analyzer,
         ticket_store_names=store_names,
+        search_service=search_service,
     )

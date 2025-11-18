@@ -39,6 +39,11 @@ def chat(
     if isinstance(conversation_history, list):
         history_texts = [str(entry) for entry in conversation_history if isinstance(entry, str)]
 
+    clarification_state = session.get("clarificationState") if isinstance(session, dict) else None
+    if request.clarification_option and clarification_state and isinstance(session, dict):
+        session.pop("clarificationState", None)
+        repository.save(session)
+
     if common_handler and common_handler.can_handle(request):
         response = common_handler.handle(request, history=history_texts)
         repository.append_question(request.session_id, request.query)
@@ -48,13 +53,22 @@ def chat(
         payload, ticket_result = ticket_handler.handle(
             request,
             history=history_texts,
+            clarification_state=clarification_state,
         )
         if ticket_result:
             repository.record_analyzer_result(request.session_id, ticket_result)
         repository.append_question(request.session_id, request.query)
         return ChatResponse.model_validate(payload)
 
-    analyzer_result = analyzer.analyze(request.query) if analyzer else None
+    analyzer_result = (
+        analyzer.analyze(
+            request.query,
+            clarification_option=request.clarification_option,
+            clarification_state=clarification_state,
+        )
+        if analyzer
+        else None
+    )
 
     payload = {
         "query": request.query,
