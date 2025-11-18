@@ -14,6 +14,12 @@ from app.services.gemini_file_search_client import GeminiFileSearchClient
 
 LOGGER = logging.getLogger(__name__)
 
+SYSTEM_INSTRUCTION = (
+    "You are a helpful customer support assistant. "
+    "Answer the user's question based ONLY on the provided search results (Context). "
+    "If the answer is not in the context, politely state that you cannot find the information."
+)
+
 
 class CommonChatHandler:
     def __init__(
@@ -36,16 +42,20 @@ class CommonChatHandler:
     def handle(self, request: ChatRequest, *, history: Optional[List[str]] = None) -> ChatResponse:
         metadata_filters: List[MetadataFilter] = []
         filter_summaries: List[str] = []
+        enhanced_query = request.query
+
         if request.common_product:
             metadata_filters.append(MetadataFilter(key="product", value=request.common_product, operator="EQUALS"))
             filter_summaries.append(f"제품={request.common_product}")
+            enhanced_query = f"[{request.common_product}] {request.query}"
 
         try:
             result = self.gemini_client.search(
-                query=request.query,
+                query=enhanced_query,
                 store_names=[self.store_name],
                 metadata_filters=metadata_filters,
                 conversation_history=history,
+                system_instruction=SYSTEM_INSTRUCTION,
             )
         except GeminiClientError as exc:
             LOGGER.exception("Gemini 검색 실패")
@@ -64,17 +74,21 @@ class CommonChatHandler:
     def stream_handle(self, request: ChatRequest, *, history: Optional[List[str]] = None):
         metadata_filters: List[MetadataFilter] = []
         filter_summaries: List[str] = []
+        enhanced_query = request.query
+
         if request.common_product:
             metadata_filters.append(MetadataFilter(key="product", value=request.common_product, operator="EQUALS"))
             filter_summaries.append(f"제품={request.common_product}")
+            enhanced_query = f"[{request.common_product}] {request.query}"
 
         def generator():
             try:
                 for event in self.gemini_client.stream_search(
-                    query=request.query,
+                    query=enhanced_query,
                     store_names=[self.store_name],
                     metadata_filters=metadata_filters,
                     conversation_history=history,
+                    system_instruction=SYSTEM_INSTRUCTION,
                 ):
                     if event["event"] == "result":
                         payload = event["data"]

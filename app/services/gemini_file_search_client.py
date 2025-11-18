@@ -51,6 +51,7 @@ class GeminiFileSearchClient:
         store_names: List[str],
         metadata_filters: Optional[List[MetadataFilter]] = None,
         conversation_history: Optional[List[str]] = None,
+        system_instruction: Optional[str] = None,
     ) -> dict[str, Any]:
         metadata_expression = _build_metadata_expression(metadata_filters)
         contents = self._build_contents(query, conversation_history)
@@ -59,7 +60,9 @@ class GeminiFileSearchClient:
         for model_name in self.models:
             for attempt in range(self.max_attempts_per_model):
                 try:
-                    data = self._execute_request(model_name, contents, metadata_expression, store_names)
+                    data = self._execute_request(
+                        model_name, contents, metadata_expression, store_names, system_instruction
+                    )
                     return self._build_response_payload(data, store_names, metadata_filters)
                 except GeminiRetryableError as exc:
                     last_error = exc
@@ -80,6 +83,7 @@ class GeminiFileSearchClient:
         store_names: List[str],
         metadata_filters: Optional[List[MetadataFilter]] = None,
         conversation_history: Optional[List[str]] = None,
+        system_instruction: Optional[str] = None,
     ) -> Generator[Dict[str, Any], None, None]:
         metadata_expression = _build_metadata_expression(metadata_filters)
         contents = self._build_contents(query, conversation_history)
@@ -102,7 +106,9 @@ class GeminiFileSearchClient:
                         },
                     }
                 try:
-                    data = self._execute_request(model_name, contents, metadata_expression, store_names)
+                    data = self._execute_request(
+                        model_name, contents, metadata_expression, store_names, system_instruction
+                    )
                     payload = self._build_response_payload(data, store_names, metadata_filters)
                     yield {"event": "result", "data": payload}
                     return
@@ -127,6 +133,7 @@ class GeminiFileSearchClient:
         contents: List[Dict[str, Any]],
         metadata_expression: Optional[str],
         store_names: List[str],
+        system_instruction: Optional[str],
     ) -> Dict[str, Any]:
         if not store_names:
             raise GeminiClientError("At least one file search store name is required")
@@ -144,6 +151,9 @@ class GeminiFileSearchClient:
         }
         if metadata_expression:
             body["tools"][0]["fileSearch"]["metadataFilter"] = metadata_expression
+
+        if system_instruction:
+            body["system_instruction"] = {"parts": [{"text": system_instruction}]}
 
         headers = {
             "Content-Type": "application/json",
@@ -234,6 +244,16 @@ class GeminiFileSearchClient:
         )
         safe_chunks: List[Any] = []
         for chunk in chunks:
+            # Handle Web Source (URI/Title)
+            if isinstance(chunk, dict) and "web" in chunk:
+                web = chunk.get("web", {})
+                safe_chunks.append({
+                    "uri": web.get("uri"),
+                    "title": web.get("title"),
+                    "type": "web"
+                })
+                continue
+
             if isinstance(chunk, (dict, list, str, int, float, bool)) or chunk is None:
                 safe_chunks.append(chunk)
                 continue

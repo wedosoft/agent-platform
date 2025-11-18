@@ -10,3 +10,6 @@ __pycache__/
 !.env.local.example
 .pytest_cache/
 uvicorn.log
+
+.gemini/
+gha-creds-*.json
