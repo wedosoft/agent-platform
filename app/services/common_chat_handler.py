@@ -9,7 +9,8 @@ from fastapi import HTTPException, status
 from app.core.config import get_settings
 from app.models.metadata import MetadataFilter
 from app.models.session import ChatRequest, ChatResponse
-from app.services.gemini_client import GeminiClient, GeminiClientError
+from app.services.gemini_client import GeminiClientError
+from app.services.gemini_file_search_client import GeminiFileSearchClient
 
 LOGGER = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class CommonChatHandler:
     def __init__(
         self,
         *,
-        gemini_client: GeminiClient,
+        gemini_client: GeminiFileSearchClient,
         store_name: str,
     ) -> None:
         self.gemini_client = gemini_client
@@ -67,7 +68,7 @@ def get_common_chat_handler() -> Optional[CommonChatHandler]:
     store_name = settings.gemini_common_store_name
     if not api_key or not store_name:
         return None
-    client = GeminiClient(
+    client = GeminiFileSearchClient(
         api_key=api_key,
         primary_model=settings.gemini_primary_model,
         fallback_model=settings.gemini_fallback_model,
