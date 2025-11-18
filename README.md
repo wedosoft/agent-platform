@@ -33,6 +33,15 @@ AGENT_PLATFORM_SUPABASE_COMMON_DEFAULT_PRODUCT=SharedDocs
 
 Fly.io에서 Redis 애드온을 사용할 경우 `AGENT_PLATFORM_REDIS_URL`을 설정하면 세션/대화 기록이 Redis로 영속화되어 다중 인스턴스 배포에서도 상태가 유지됩니다. 로컬 개발 시 해당 변수를 비워두면 인메모리 저장소를 사용합니다.
 
+티켓/헬프센터 메타데이터 검증이 필요하면 Freshdesk API 자격 증명을 추가하세요.
+
+```bash
+AGENT_PLATFORM_FRESHDESK_DOMAIN=your-domain
+AGENT_PLATFORM_FRESHDESK_API_KEY=your-api-key
+```
+
+FastAPI는 해당 정보를 이용해 Freshdesk `/api/v2` 엔드포인트에서 카테고리·폴더·티켓 필드 데이터를 캐시합니다.
+
 기본 API prefix는 `/api`이며 현재 프록시/구현된 엔드포인트는 다음과 같습니다.
 
 - `GET /api/health`

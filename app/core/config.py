@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     gemini_primary_model: str = "gemini-2.5-flash"
     gemini_fallback_model: Optional[str] = "gemini-1.5-flash-latest"
     gemini_common_store_name: Optional[str] = None
+    freshdesk_domain: Optional[str] = None
+    freshdesk_api_key: Optional[str] = None
     supabase_common_url: Optional[str] = Field(default=None, alias="supabase_common_url")
     supabase_common_service_role_key: Optional[str] = Field(default=None, alias="supabase_common_service_role_key")
     supabase_common_table_name: str = "documents"

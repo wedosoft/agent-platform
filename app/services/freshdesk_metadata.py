@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from fastapi import HTTPException, status
 
 from app.core.config import get_settings
+from app.services.freshdesk_client import FreshdeskClient, FreshdeskClientError
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +33,20 @@ class FreshdeskMetadataCache:
     source_map: Dict[int, str] = field(default_factory=dict)
     type_map: Dict[str, str] = field(default_factory=dict)
     expires_at: datetime = field(default_factory=lambda: datetime.utcnow())
+    category_map: Dict[int, str] = field(default_factory=dict)
+    folder_map: Dict[int, dict] = field(default_factory=dict)
 
 
 class FreshdeskMetadataService:
-    def __init__(self, *, ttl_hours: int = 24) -> None:
+    def __init__(
+        self,
+        *,
+        ttl_hours: int = 24,
+        client: Optional[FreshdeskClient] = None,
+    ) -> None:
         self.ttl = timedelta(hours=ttl_hours)
         self.cache: Optional[FreshdeskMetadataCache] = None
+        self.client = client
 
     async def ensure_loaded(self) -> None:
         if self.cache and self.cache.expires_at > datetime.utcnow():
@@ -45,38 +54,38 @@ class FreshdeskMetadataService:
         await self._load_metadata()
 
     async def _load_metadata(self) -> None:
-        # TODO: 실제 Freshdesk API 연동 추가
-        logger.info("Loading Freshdesk ticket field metadata (stub)")
-        fields = [
-            FreshdeskTicketField(
-                name="status",
-                choices=[
-                    FreshdeskTicketFieldChoice(value=2, label="Open"),
-                    FreshdeskTicketFieldChoice(value=3, label="Pending"),
-                    FreshdeskTicketFieldChoice(value=4, label="Resolved"),
-                    FreshdeskTicketFieldChoice(value=5, label="Closed"),
-                ],
-            ),
-            FreshdeskTicketField(
-                name="priority",
-                choices=[
-                    FreshdeskTicketFieldChoice(value=1, label="Low"),
-                    FreshdeskTicketFieldChoice(value=2, label="Medium"),
-                    FreshdeskTicketFieldChoice(value=3, label="High"),
-                    FreshdeskTicketFieldChoice(value=4, label="Urgent"),
-                ],
-            ),
-        ]
+        settings = get_settings()
+        client = self.client
+        if client is None:
+            if not settings.freshdesk_domain or not settings.freshdesk_api_key:
+                raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Freshdesk API 설정이 필요합니다")
+            client = FreshdeskClient(settings.freshdesk_domain, settings.freshdesk_api_key)
+            self.client = client
+        logger.info("Loading Freshdesk metadata from API")
+        try:
+            ticket_fields, categories = await asyncio.gather(
+                client.get_ticket_fields(),
+                client.get_categories(),
+            )
+            folders_nested = await asyncio.gather(
+                *[client.get_folders(category["id"]) for category in categories]
+            )
+        except FreshdeskClientError as exc:  # pragma: no cover - network errors
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 
         cache = FreshdeskMetadataCache()
-        for field in fields:
-            if not field.choices:
+        for field in ticket_fields:
+            choices = field.get("choices")
+            if not choices:
                 continue
-            mapping = {choice.value: choice.label for choice in field.choices}
-            if field.name == "status":
+            mapping = {int(choice["value"]): choice["label"] for choice in choices}
+            if field.get("name") == "status":
                 cache.status_map = mapping
-            elif field.name == "priority":
+            elif field.get("name") == "priority":
                 cache.priority_map = mapping
+        cache.category_map = {int(cat["id"]): cat["name"] for cat in categories}
+        for category, folder_list in zip(categories, folders_nested):
+            cache.folder_map.update({int(folder["id"]): folder for folder in folder_list})
         cache.expires_at = datetime.utcnow() + self.ttl
         self.cache = cache
 
@@ -99,6 +108,29 @@ class FreshdeskMetadataService:
     async def list_status_labels(self) -> List[str]:
         await self.ensure_loaded()
         return list(self.cache.status_map.values())
+
+    async def resolve_category_id(self, label: str) -> Optional[int]:
+        await self.ensure_loaded()
+        normalized = label.strip().lower()
+        for category_id, name in self.cache.category_map.items():
+            if name.strip().lower() == normalized:
+                return category_id
+        return None
+
+    async def list_categories(self) -> List[str]:
+        await self.ensure_loaded()
+        return list(self.cache.category_map.values())
+
+    async def resolve_folder_id(self, label: str, category_id: Optional[int] = None) -> Optional[int]:
+        await self.ensure_loaded()
+        normalized = label.strip().lower()
+        for folder_id, folder in self.cache.folder_map.items():
+            if category_id and folder.get("category_id") != category_id:
+                continue
+            name = folder.get("name", "").strip().lower()
+            if name == normalized:
+                return folder_id
+        return None
 
 
 metadata_service = FreshdeskMetadataService()

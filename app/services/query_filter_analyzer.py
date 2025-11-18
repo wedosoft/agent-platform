@@ -6,6 +6,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import List, Tuple
 
+from functools import lru_cache
+
 from app.core.config import get_settings
 from app.models.analyzer import AnalyzerClarification, AnalyzerResult
 from app.models.metadata import MetadataFilter
@@ -155,3 +157,12 @@ class QueryFilterAnalyzer:
             operator="GREATER_THAN",
             value=cutoff.isoformat(),
         )
+
+
+@lru_cache
+def get_query_filter_analyzer() -> Optional[QueryFilterAnalyzer]:
+    settings = get_settings()
+    api_key = settings.gemini_api_key or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return None
+    return QueryFilterAnalyzer()
