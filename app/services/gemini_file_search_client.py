@@ -68,18 +68,21 @@ class GeminiFileSearchClient:
         last_error: Optional[Exception] = None
         for model_name in self.models:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+            
+            # v1beta API 공식 스키마: fileSearch (camelCase) + fileSearchStoreNames
+            file_search_tool: dict[str, Any] = {
+                "fileSearch": {
+                    "fileSearchStoreNames": store_names
+                }
+            }
+            
+            if metadata_expression:
+                file_search_tool["fileSearch"]["metadataFilter"] = metadata_expression
+            
             body: dict[str, Any] = {
                 "contents": contents,
-                "tools": [
-                    {
-                        "file_search": {
-                            "file_search_store_names": store_names,
-                        }
-                    }
-                ],
+                "tools": [file_search_tool],
             }
-            if metadata_expression:
-                body["tools"][0]["file_search"]["metadata_filter"] = metadata_expression
 
             headers = {
                 "Content-Type": "application/json",

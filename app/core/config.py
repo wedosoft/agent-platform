@@ -31,8 +31,8 @@ class Settings(BaseSettings):
 
     # Gemini / RAG
     gemini_api_key: Optional[str] = None
-    gemini_primary_model: str = "gemini-2.5-flash"
-    gemini_fallback_model: Optional[str] = "gemini-1.5-flash-latest"
+    gemini_primary_model: str = Field(default="gemini-2.5-flash")
+    gemini_fallback_model: Optional[str] = Field(default="gemini-2.0-flash")
     gemini_common_store_name: Optional[str] = None
     gemini_ticket_store_names: List[str] = Field(default_factory=list)
 
