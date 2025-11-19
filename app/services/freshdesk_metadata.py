@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+from functools import lru_cache
 
 from fastapi import HTTPException, status
+import redis.asyncio as redis
 
 from app.core.config import get_settings
 from app.services.freshdesk_client import FreshdeskClient, FreshdeskClientError
@@ -36,22 +39,83 @@ class FreshdeskMetadataCache:
     category_map: Dict[int, str] = field(default_factory=dict)
     folder_map: Dict[int, dict] = field(default_factory=dict)
 
+    def to_dict(self) -> dict:
+        data = asdict(self)
+        data["expires_at"] = self.expires_at.isoformat()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> FreshdeskMetadataCache:
+        expires_at_str = data.get("expires_at")
+        if expires_at_str:
+            data["expires_at"] = datetime.fromisoformat(expires_at_str)
+        # Ensure integer keys are actually integers (JSON converts keys to strings)
+        if "status_map" in data:
+            data["status_map"] = {int(k): v for k, v in data["status_map"].items()}
+        if "priority_map" in data:
+            data["priority_map"] = {int(k): v for k, v in data["priority_map"].items()}
+        if "source_map" in data:
+            data["source_map"] = {int(k): v for k, v in data["source_map"].items()}
+        if "category_map" in data:
+            data["category_map"] = {int(k): v for k, v in data["category_map"].items()}
+        if "folder_map" in data:
+            data["folder_map"] = {int(k): v for k, v in data["folder_map"].items()}
+        return cls(**data)
+
 
 class FreshdeskMetadataService:
+    REDIS_KEY = "freshdesk:metadata:cache"
+
     def __init__(
         self,
         *,
         ttl_hours: int = 24,
         client: Optional[FreshdeskClient] = None,
+        redis_client: Optional[redis.Redis] = None,
     ) -> None:
         self.ttl = timedelta(hours=ttl_hours)
         self.cache: Optional[FreshdeskMetadataCache] = None
         self.client = client
+        self.redis = redis_client
 
     async def ensure_loaded(self) -> None:
+        # 1. Check local memory cache
         if self.cache and self.cache.expires_at > datetime.utcnow():
             return
+
+        # 2. Check Redis cache
+        if self.redis:
+            if await self._load_from_redis():
+                return
+
+        # 3. Fetch from API
         await self._load_metadata()
+
+    async def _load_from_redis(self) -> bool:
+        try:
+            data = await self.redis.get(self.REDIS_KEY)
+            if not data:
+                return False
+            cache_dict = json.loads(data)
+            cache = FreshdeskMetadataCache.from_dict(cache_dict)
+            if cache.expires_at > datetime.utcnow():
+                self.cache = cache
+                logger.info("Loaded Freshdesk metadata from Redis")
+                return True
+        except Exception as e:
+            logger.warning(f"Failed to load metadata from Redis: {e}")
+        return False
+
+    async def _save_to_redis(self, cache: FreshdeskMetadataCache) -> None:
+        if not self.redis:
+            return
+        try:
+            data = json.dumps(cache.to_dict())
+            # TTL set to match internal expiry + buffer
+            ttl_seconds = int(self.ttl.total_seconds())
+            await self.redis.setex(self.REDIS_KEY, ttl_seconds, data)
+        except Exception as e:
+            logger.warning(f"Failed to save metadata to Redis: {e}")
 
     async def _load_metadata(self) -> None:
         settings = get_settings()
@@ -88,6 +152,7 @@ class FreshdeskMetadataService:
             cache.folder_map.update({int(folder["id"]): folder for folder in folder_list})
         cache.expires_at = datetime.utcnow() + self.ttl
         self.cache = cache
+        await self._save_to_redis(cache)
 
     async def resolve_priority_label(self, label: str) -> Optional[int]:
         await self.ensure_loaded()
@@ -133,4 +198,14 @@ class FreshdeskMetadataService:
         return None
 
 
-metadata_service = FreshdeskMetadataService()
+@lru_cache
+def get_freshdesk_metadata_service() -> FreshdeskMetadataService:
+    settings = get_settings()
+    redis_client = None
+    if settings.redis_url:
+        try:
+            redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+        except Exception as e:
+            logger.warning(f"Failed to connect to Redis for metadata service: {e}")
+    
+    return FreshdeskMetadataService(redis_client=redis_client)

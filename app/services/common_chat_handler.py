@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import threading
 from typing import List, Optional
 
 from fastapi import HTTPException, status
@@ -39,7 +41,7 @@ class CommonChatHandler:
             return True
         return all(source == self.store_name for source in sources)
 
-    def handle(self, request: ChatRequest, *, history: Optional[List[str]] = None) -> ChatResponse:
+    async def handle(self, request: ChatRequest, *, history: Optional[List[str]] = None) -> ChatResponse:
         metadata_filters: List[MetadataFilter] = []
         filter_summaries: List[str] = []
         enhanced_query = request.query
@@ -50,7 +52,7 @@ class CommonChatHandler:
             enhanced_query = f"[{request.common_product}] {request.query}"
 
         try:
-            result = self.gemini_client.search(
+            result = await self.gemini_client.search(
                 query=enhanced_query,
                 store_names=[self.store_name],
                 metadata_filters=metadata_filters,
@@ -71,7 +73,7 @@ class CommonChatHandler:
         }
         return ChatResponse.model_validate(payload)
 
-    def stream_handle(self, request: ChatRequest, *, history: Optional[List[str]] = None):
+    async def stream_handle(self, request: ChatRequest, *, history: Optional[List[str]] = None):
         metadata_filters: List[MetadataFilter] = []
         filter_summaries: List[str] = []
         enhanced_query = request.query
@@ -81,35 +83,33 @@ class CommonChatHandler:
             filter_summaries.append(f"제품={request.common_product}")
             enhanced_query = f"[{request.common_product}] {request.query}"
 
-        def generator():
-            try:
-                for event in self.gemini_client.stream_search(
-                    query=enhanced_query,
-                    store_names=[self.store_name],
-                    metadata_filters=metadata_filters,
-                    conversation_history=history,
-                    system_instruction=SYSTEM_INSTRUCTION,
-                ):
-                    if event["event"] == "result":
-                        payload = event["data"]
-                        payload.update(
-                            {
-                                "ragStoreName": self.store_name,
-                                "sources": [self.store_name],
-                                "filters": filter_summaries,
-                                "knownContext": {},
-                            }
-                        )
-                        yield {"event": "result", "data": payload}
-                    else:
-                        yield event
-            except GeminiClientError as exc:
-                yield {
-                    "event": "error",
-                    "data": {"message": str(exc) or "잠시 후 다시 시도해 주세요."},
-                }
+        try:
+            async for event in self.gemini_client.stream_search(
+                query=enhanced_query,
+                store_names=[self.store_name],
+                metadata_filters=metadata_filters,
+                conversation_history=history,
+                system_instruction=SYSTEM_INSTRUCTION,
+            ):
+                if event["event"] == "result":
+                    payload = event["data"]
+                    payload.update(
+                        {
+                            "ragStoreName": self.store_name,
+                            "sources": [self.store_name],
+                            "filters": filter_summaries,
+                            "knownContext": {},
+                        }
+                    )
+                    yield {"event": "result", "data": payload}
+                else:
+                    yield event
+        except GeminiClientError as exc:
+            yield {
+                "event": "error",
+                "data": {"message": str(exc) or "잠시 후 다시 시도해 주세요."},
+            }
 
-        return generator()
 
 
 def get_common_chat_handler() -> Optional[CommonChatHandler]:

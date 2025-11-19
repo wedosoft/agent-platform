@@ -11,7 +11,7 @@ from functools import lru_cache
 from app.core.config import get_settings
 from app.models.analyzer import AnalyzerClarification, AnalyzerResult
 from app.models.metadata import MetadataFilter
-from app.services.freshdesk_metadata import FreshdeskMetadataService
+from app.services.freshdesk_metadata import FreshdeskMetadataService, get_freshdesk_metadata_service
 from app.services.gemini_client import GeminiClient
 
 
@@ -27,7 +27,7 @@ class QueryFilterAnalyzer:
     ) -> None:
         self.fallback_months = fallback_months
         self.allowed_fields = metadata_fields or ["priority", "status", "createdAt", "updatedAt"]
-        self.metadata_service = metadata_service or FreshdeskMetadataService()
+        self.metadata_service = metadata_service or get_freshdesk_metadata_service()
         settings = get_settings()
         api_key = settings.gemini_api_key or os.getenv("GEMINI_API_KEY")
         self.llm_client: GeminiClient | None = None
@@ -38,7 +38,7 @@ class QueryFilterAnalyzer:
                 fallback_model=settings.gemini_fallback_model,
             )
 
-    def analyze(
+    async def analyze(
         self,
         query: str,
         *,
@@ -47,17 +47,19 @@ class QueryFilterAnalyzer:
     ) -> AnalyzerResult:
         if not self.llm_client:
             result = self._fallback_result()
-            return asyncio.run(self._apply_clarification_choice(result, clarification_option, clarification_state))
+            return await self._apply_clarification_choice(result, clarification_option, clarification_state)
         clarifications = []
         try:
             prompt = self._build_prompt(query)
-            response = self.llm_client.client.models.generate_content(
+            # TODO: Use async generation if available in GeminiClient
+            response = await asyncio.to_thread(
+                self.llm_client.client.models.generate_content,
                 model=self.llm_client.models[0],
                 contents=[{"role": "user", "parts": [{"text": prompt}]}],
             )
             text = getattr(response, "text", "") or ""
             filters, summaries = self._parse_response(text)
-            filters, clarifications = asyncio.run(self._normalize_with_metadata(filters))
+            filters, clarifications = await self._normalize_with_metadata(filters)
             if not filters and clarifications:
                 result = AnalyzerResult(
                     filters=[],
@@ -68,14 +70,10 @@ class QueryFilterAnalyzer:
                     clarification=clarifications[0],
                     known_context={},
                 )
-                return asyncio.run(
-                    self._apply_clarification_choice(result, clarification_option, clarification_state)
-                )
+                return await self._apply_clarification_choice(result, clarification_option, clarification_state)
             if not filters:
                 result = self._fallback_result(message="LLM 필터 추출 실패. 기본 필터 적용")
-                return asyncio.run(
-                    self._apply_clarification_choice(result, clarification_option, clarification_state)
-                )
+                return await self._apply_clarification_choice(result, clarification_option, clarification_state)
             result = AnalyzerResult(
                 filters=filters,
                 summaries=summaries,
@@ -85,14 +83,10 @@ class QueryFilterAnalyzer:
                 clarification=clarifications[0] if clarifications else None,
                 known_context={},
             )
-            return asyncio.run(
-                self._apply_clarification_choice(result, clarification_option, clarification_state)
-            )
+            return await self._apply_clarification_choice(result, clarification_option, clarification_state)
         except Exception:
             result = self._fallback_result(message="LLM 호출 실패. 기본 필터 적용")
-            return asyncio.run(
-                self._apply_clarification_choice(result, clarification_option, clarification_state)
-            )
+            return await self._apply_clarification_choice(result, clarification_option, clarification_state)
 
     def _build_prompt(self, query: str) -> str:
         return (

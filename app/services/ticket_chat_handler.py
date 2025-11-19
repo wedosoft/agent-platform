@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from functools import lru_cache
 
@@ -43,14 +43,14 @@ class TicketChatHandler:
             return False
         return all(source in self.ticket_store_names for source in sources)
 
-    def handle(
+    async def handle(
         self,
         request: ChatRequest,
         *,
         history: List[str],
         clarification_state: Optional[dict] = None,
-    ) -> tuple[dict, AnalyzerResult]:
-        analyzer_result = self.analyzer.analyze(
+    ) -> Tuple[dict, AnalyzerResult]:
+        analyzer_result = await self.analyzer.analyze(
             request.query,
             clarification_option=request.clarification_option,
             clarification_state=clarification_state,
@@ -58,7 +58,7 @@ class TicketChatHandler:
         freshdesk_tickets = []
         search_plan = None
         if self.search_service:
-            search_result = asyncio.run(self.search_service.search_with_filters(analyzer_result))
+            search_result = await self.search_service.search_with_filters(analyzer_result)
             freshdesk_tickets = search_result.tickets
             search_plan = search_result.plan
             if search_result.ticket_ids:
@@ -71,7 +71,8 @@ class TicketChatHandler:
                 analyzer_result.summaries.append(f"티켓ID={len(search_result.ticket_ids)}개")
         store_names = request.sources or self.ticket_store_names
         try:
-            gemini_response = self.gemini_client.search(
+            gemini_response = await asyncio.to_thread(
+                self.gemini_client.search,
                 query=request.query,
                 store_names=store_names,
                 metadata_filters=analyzer_result.filters,

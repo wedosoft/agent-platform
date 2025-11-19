@@ -8,7 +8,7 @@ from functools import lru_cache
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException, status
-from redis import Redis
+import redis.asyncio as redis
 
 from app.core.config import get_settings
 from app.models.analyzer import AnalyzerResult
@@ -22,19 +22,19 @@ class SessionRepository(ABC):
         self.ttl_seconds = ttl_seconds
 
     @abstractmethod
-    def save(self, record: SessionRecord) -> SessionRecord:
+    async def save(self, record: SessionRecord) -> SessionRecord:
         ...
 
     @abstractmethod
-    def get(self, session_id: str) -> Optional[SessionRecord]:
+    async def get(self, session_id: str) -> Optional[SessionRecord]:
         ...
 
     @abstractmethod
-    def append_question(self, session_id: str, question: str) -> Optional[SessionRecord]:
+    async def append_question(self, session_id: str, question: str) -> Optional[SessionRecord]:
         ...
 
     @abstractmethod
-    def record_analyzer_result(self, session_id: str, result: AnalyzerResult) -> None:
+    async def record_analyzer_result(self, session_id: str, result: AnalyzerResult) -> None:
         ...
 
     def normalize(self, payload: Dict[str, Any]) -> SessionRecord:
@@ -62,7 +62,7 @@ class InMemorySessionRepository(SessionRepository):
     def _touch(self, session_id: str) -> None:
         self._expires[session_id] = datetime.now(timezone.utc) + timedelta(seconds=self.ttl_seconds)
 
-    def save(self, record: SessionRecord) -> SessionRecord:
+    async def save(self, record: SessionRecord) -> SessionRecord:
         self._purge()
         session_id = record["sessionId"]
         record = self.normalize(record)
@@ -70,25 +70,25 @@ class InMemorySessionRepository(SessionRepository):
         self._touch(session_id)
         return record
 
-    def get(self, session_id: str) -> Optional[SessionRecord]:
+    async def get(self, session_id: str) -> Optional[SessionRecord]:
         self._purge()
         record = self._data.get(session_id)
         if record:
             self._touch(session_id)
         return record
 
-    def append_question(self, session_id: str, question: str) -> Optional[SessionRecord]:
-        record = self.get(session_id)
+    async def append_question(self, session_id: str, question: str) -> Optional[SessionRecord]:
+        record = await self.get(session_id)
         if not record:
             return None
         history = record.setdefault("questionHistory", [])
         history.append(question)
         record["updatedAt"] = datetime.now(timezone.utc).isoformat()
-        self.save(record)
+        await self.save(record)
         return record
 
-    def record_analyzer_result(self, session_id: str, result: AnalyzerResult) -> None:
-        record = self.get(session_id)
+    async def record_analyzer_result(self, session_id: str, result: AnalyzerResult) -> None:
+        record = await self.get(session_id)
         if not record:
             return
         responses = record.setdefault("analyzerResponses", [])
@@ -109,11 +109,11 @@ class InMemorySessionRepository(SessionRepository):
             }
         else:
             record.pop("clarificationState", None)
-        self.save(record)
+        await self.save(record)
 
 
 class RedisSessionRepository(SessionRepository):
-    def __init__(self, redis_client: Redis, prefix: str, ttl_seconds: int) -> None:
+    def __init__(self, redis_client: redis.Redis, prefix: str, ttl_seconds: int) -> None:
         super().__init__(ttl_seconds)
         self.client = redis_client
         self.prefix = prefix
@@ -121,33 +121,33 @@ class RedisSessionRepository(SessionRepository):
     def _key(self, session_id: str) -> str:
         return f"{self.prefix}:{session_id}"
 
-    def save(self, record: SessionRecord) -> SessionRecord:
+    async def save(self, record: SessionRecord) -> SessionRecord:
         record = self.normalize(record)
         key = self._key(record["sessionId"])
-        self.client.setex(key, self.ttl_seconds, json.dumps(record))
+        await self.client.setex(key, self.ttl_seconds, json.dumps(record))
         return record
 
-    def get(self, session_id: str) -> Optional[SessionRecord]:
-        raw = self.client.get(self._key(session_id))
+    async def get(self, session_id: str) -> Optional[SessionRecord]:
+        raw = await self.client.get(self._key(session_id))
         if not raw:
             return None
         record = json.loads(raw)
         # touch TTL
-        self.client.expire(self._key(session_id), self.ttl_seconds)
+        await self.client.expire(self._key(session_id), self.ttl_seconds)
         return record
 
-    def append_question(self, session_id: str, question: str) -> Optional[SessionRecord]:
-        record = self.get(session_id)
+    async def append_question(self, session_id: str, question: str) -> Optional[SessionRecord]:
+        record = await self.get(session_id)
         if not record:
             return None
         history = record.setdefault("questionHistory", [])
         history.append(question)
         record["updatedAt"] = datetime.now(timezone.utc).isoformat()
-        self.save(record)
+        await self.save(record)
         return record
 
-    def record_analyzer_result(self, session_id: str, result: AnalyzerResult) -> None:
-        record = self.get(session_id)
+    async def record_analyzer_result(self, session_id: str, result: AnalyzerResult) -> None:
+        record = await self.get(session_id)
         if not record:
             return
         responses = record.setdefault("analyzerResponses", [])
@@ -168,12 +168,12 @@ class RedisSessionRepository(SessionRepository):
             }
         else:
             record.pop("clarificationState", None)
-        self.save(record)
+        await self.save(record)
 
 
-def _build_redis_client(url: str) -> Redis:
+def _build_redis_client(url: str) -> redis.Redis:
     try:
-        return Redis.from_url(url, decode_responses=True)
+        return redis.from_url(url, decode_responses=True)
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Redis 연결 실패: {exc}") from exc
 

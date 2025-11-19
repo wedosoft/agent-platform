@@ -24,7 +24,7 @@ def _handle_error(exc: PipelineClientError) -> HTTPException:
 
 
 @router.post("/chat", response_model=ChatResponse, response_model_by_alias=True)
-def chat(
+async def chat(
     request: ChatRequest,
     pipeline: PipelineClient = Depends(get_pipeline_client),
     repository: SessionRepository = Depends(get_session_repository),
@@ -32,13 +32,13 @@ def chat(
     analyzer: Optional[QueryFilterAnalyzer] = Depends(get_query_filter_analyzer),
     ticket_handler: Optional[TicketChatHandler] = Depends(get_ticket_chat_handler),
 ) -> ChatResponse:
-    session = repository.get(request.session_id)
+    session = await repository.get(request.session_id)
     if not session:
         try:
-            session = pipeline.get_session(request.session_id)
+            session = await pipeline.get_session(request.session_id)
         except PipelineClientError as exc:
             raise _handle_error(exc)
-        repository.save(session)
+        await repository.save(session)
 
     conversation_history = session.get("questionHistory") if isinstance(session, dict) else []
     history_texts = []
@@ -48,26 +48,26 @@ def chat(
     clarification_state = session.get("clarificationState") if isinstance(session, dict) else None
     if request.clarification_option and clarification_state and isinstance(session, dict):
         session.pop("clarificationState", None)
-        repository.save(session)
+        await repository.save(session)
 
     if common_handler and common_handler.can_handle(request):
-        response = common_handler.handle(request, history=history_texts)
-        repository.append_question(request.session_id, request.query)
+        response = await common_handler.handle(request, history=history_texts)
+        await repository.append_question(request.session_id, request.query)
         return response
 
     if ticket_handler and ticket_handler.can_handle(request):
-        payload, ticket_result = ticket_handler.handle(
+        payload, ticket_result = await ticket_handler.handle(
             request,
             history=history_texts,
             clarification_state=clarification_state,
         )
         if ticket_result:
-            repository.record_analyzer_result(request.session_id, ticket_result)
-        repository.append_question(request.session_id, request.query)
+            await repository.record_analyzer_result(request.session_id, ticket_result)
+        await repository.append_question(request.session_id, request.query)
         return ChatResponse.model_validate(payload)
 
     analyzer_result = (
-        analyzer.analyze(
+        await analyzer.analyze(
             request.query,
             clarification_option=request.clarification_option,
             clarification_state=clarification_state,
@@ -88,7 +88,7 @@ def chat(
         payload["commonProduct"] = request.common_product
 
     try:
-        response = pipeline.chat(payload)
+        response = await pipeline.chat(payload)
     except PipelineClientError as exc:
         raise _handle_error(exc)
 
@@ -100,14 +100,14 @@ def chat(
             response["clarification"] = asdict(analyzer_result.clarification)
         if analyzer_result.confidence and not response.get("filterConfidence"):
             response["filterConfidence"] = analyzer_result.confidence
-        repository.record_analyzer_result(request.session_id, analyzer_result)
+        await repository.record_analyzer_result(request.session_id, analyzer_result)
 
-    repository.append_question(request.session_id, request.query)
+    await repository.append_question(request.session_id, request.query)
     return ChatResponse.model_validate(response)
 
 
 @router.get("/chat/stream")
-def chat_stream(
+async def chat_stream(
     session_id: str = Query(..., alias="sessionId"),
     query: str = Query(...),
     rag_store_name: Optional[str] = Query(None, alias="ragStoreName"),
@@ -127,13 +127,13 @@ def chat_stream(
         clarificationOption=clarification_option,
     )
 
-    session = repository.get(request.session_id)
+    session = await repository.get(request.session_id)
     if not session:
         try:
-            session = pipeline.get_session(request.session_id)
+            session = await pipeline.get_session(request.session_id)
         except PipelineClientError as exc:
             raise _handle_error(exc)
-        repository.save(session)
+        await repository.save(session)
 
     conversation_history = session.get("questionHistory") if isinstance(session, dict) else []
     history_texts: List[str] = []
@@ -141,17 +141,17 @@ def chat_stream(
         snapshots = [str(entry) for entry in conversation_history if isinstance(entry, str)]
         history_texts = snapshots[-2:]
 
-    def event_stream():
+    async def event_stream():
         if not common_handler or not common_handler.can_handle(request):
             yield _format_sse("error", {"message": "현재 공통 문서 질문만 지원합니다."})
             return
 
         terminal_event_sent = False
-        for event in common_handler.stream_handle(request, history=history_texts):
+        async for event in common_handler.stream_handle(request, history=history_texts):
             yield _format_sse(event["event"], event["data"])
             if event["event"] == "result":
                 terminal_event_sent = True
-                repository.append_question(request.session_id, request.query)
+                await repository.append_question(request.session_id, request.query)
             if event["event"] == "error":
                 terminal_event_sent = True
                 break
@@ -159,3 +159,4 @@ def chat_stream(
             yield _format_sse("error", {"message": "잠시 후 다시 시도해 주세요."})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+

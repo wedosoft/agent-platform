@@ -12,7 +12,7 @@ from app.models.analyzer import AnalyzerResult
 from app.models.metadata import MetadataFilter
 from app.services.freshdesk_client import FreshdeskClient, FreshdeskClientError
 from app.services.freshdesk_entity_resolver import FreshdeskEntityResolver, get_freshdesk_entity_resolver
-from app.services.freshdesk_metadata import FreshdeskMetadataService
+from app.services.freshdesk_metadata import FreshdeskMetadataService, get_freshdesk_metadata_service
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class FreshdeskSearchService:
     ) -> None:
         self.client = client
         self.entity_resolver = entity_resolver
-        self.metadata_service = metadata_service or FreshdeskMetadataService()
+        self.metadata_service = metadata_service or get_freshdesk_metadata_service()
 
     async def search_with_filters(self, analyzer_result: AnalyzerResult) -> FreshdeskSearchResult:
         plan = self._build_plan()
@@ -241,5 +241,5 @@ def get_freshdesk_search_service() -> Optional[FreshdeskSearchService]:
         return None
     client = FreshdeskClient(settings.freshdesk_domain, settings.freshdesk_api_key)
     resolver = get_freshdesk_entity_resolver()
-    metadata_service = FreshdeskMetadataService(client=client)
+    metadata_service = get_freshdesk_metadata_service()
     return FreshdeskSearchService(client=client, entity_resolver=resolver, metadata_service=metadata_service)

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import asyncio
 import json
 import logging
 import time
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, AsyncGenerator
 
 import httpx
 
@@ -44,7 +46,7 @@ class GeminiFileSearchClient:
         self.max_attempts_per_model = max(1, max_attempts_per_model)
         self.retry_backoff_seconds = max(0.5, retry_backoff_seconds)
 
-    def search(
+    async def search(
         self,
         *,
         query: str,
@@ -60,14 +62,14 @@ class GeminiFileSearchClient:
         for model_name in self.models:
             for attempt in range(self.max_attempts_per_model):
                 try:
-                    data = self._execute_request(
+                    data = await self._execute_request(
                         model_name, contents, metadata_expression, store_names, system_instruction
                     )
                     return self._build_response_payload(data, store_names, metadata_filters)
                 except GeminiRetryableError as exc:
                     last_error = exc
                     if attempt + 1 < self.max_attempts_per_model:
-                        self._sleep_backoff(attempt)
+                        await self._sleep_backoff(attempt)
                         continue
                 except GeminiClientError as exc:
                     last_error = exc
@@ -76,7 +78,7 @@ class GeminiFileSearchClient:
 
         raise GeminiClientError("Gemini 검색 실패") from last_error
 
-    def stream_search(
+    async def stream_search(
         self,
         *,
         query: str,
@@ -84,7 +86,7 @@ class GeminiFileSearchClient:
         metadata_filters: Optional[List[MetadataFilter]] = None,
         conversation_history: Optional[List[str]] = None,
         system_instruction: Optional[str] = None,
-    ) -> Generator[Dict[str, Any], None, None]:
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         metadata_expression = _build_metadata_expression(metadata_filters)
         contents = self._build_contents(query, conversation_history)
 
@@ -106,7 +108,7 @@ class GeminiFileSearchClient:
                         },
                     }
                 try:
-                    data = self._execute_request(
+                    data = await self._execute_request(
                         model_name, contents, metadata_expression, store_names, system_instruction
                     )
                     payload = self._build_response_payload(data, store_names, metadata_filters)
@@ -115,7 +117,7 @@ class GeminiFileSearchClient:
                 except GeminiRetryableError as exc:
                     LOGGER.warning("Gemini model %s retryable error: %s", model_name, exc)
                     if attempt + 1 < self.max_attempts_per_model:
-                        self._sleep_backoff(attempt)
+                        await self._sleep_backoff(attempt)
                         continue
                 except GeminiClientError as exc:
                     LOGGER.warning("Gemini model %s failed: %s", model_name, exc)
@@ -127,7 +129,7 @@ class GeminiFileSearchClient:
 
         yield {"event": "error", "data": {"message": "잠시 후 다시 시도해 주세요."}}
 
-    def _execute_request(
+    async def _execute_request(
         self,
         model_name: str,
         contents: List[Dict[str, Any]],
@@ -161,8 +163,108 @@ class GeminiFileSearchClient:
         }
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(url, headers=headers, json=body)
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(url, headers=headers, json=body)
+        except httpx.TimeoutException as exc:
+            raise GeminiRetryableError("Gemini REST 요청이 타임아웃되었습니다.") from exc
+        except httpx.HTTPError as exc:
+            raise GeminiRetryableError("Gemini REST 요청 중 네트워크 오류가 발생했습니다.") from exc
+
+        if response.status_code >= 400:
+            message = response.text
+            if response.status_code in RETRYABLE_STATUS_CODES:
+                raise GeminiRetryableError(f"Gemini REST error {response.status_code}: {message}")
+            raise GeminiClientError(f"Gemini REST error {response.status_code}: {message}")
+
+        return response.json()
+
+    async def stream_search(
+        self,
+        *,
+        query: str,
+        store_names: List[str],
+        metadata_filters: Optional[List[MetadataFilter]] = None,
+        conversation_history: Optional[List[str]] = None,
+        system_instruction: Optional[str] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        metadata_expression = _build_metadata_expression(metadata_filters)
+        contents = self._build_contents(query, conversation_history)
+
+        yield {"event": "status", "data": {"message": "검색을 시작합니다."}}
+
+        for model_name in self.models:
+            yield {
+                "event": "status",
+                "data": {"message": f"{model_name} 모델로 검색 중입니다.", "model": model_name},
+            }
+            for attempt in range(self.max_attempts_per_model):
+                if attempt > 0:
+                    yield {
+                        "event": "status",
+                        "data": {
+                            "message": "모델 과부하로 재시도 중입니다...",
+                            "model": model_name,
+                            "attempt": attempt + 1,
+                        },
+                    }
+                try:
+                    data = await self._execute_request(
+                        model_name, contents, metadata_expression, store_names, system_instruction
+                    )
+                    payload = self._build_response_payload(data, store_names, metadata_filters)
+                    yield {"event": "result", "data": payload}
+                    return
+                except GeminiRetryableError as exc:
+                    LOGGER.warning("Gemini model %s retryable error: %s", model_name, exc)
+                    if attempt + 1 < self.max_attempts_per_model:
+                        await self._sleep_backoff(attempt)
+                        continue
+                except GeminiClientError as exc:
+                    LOGGER.warning("Gemini model %s failed: %s", model_name, exc)
+                    yield {
+                        "event": "status",
+                        "data": {"message": str(exc), "model": model_name},
+                    }
+                    break
+
+        yield {"event": "error", "data": {"message": "잠시 후 다시 시도해 주세요."}}
+
+    async def _execute_request(
+        self,
+        model_name: str,
+        contents: List[Dict[str, Any]],
+        metadata_expression: Optional[str],
+        store_names: List[str],
+        system_instruction: Optional[str],
+    ) -> Dict[str, Any]:
+        if not store_names:
+            raise GeminiClientError("At least one file search store name is required")
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+        body: Dict[str, Any] = {
+            "contents": contents,
+            "tools": [
+                {
+                    "fileSearch": {
+                        "fileSearchStoreNames": store_names,
+                    }
+                }
+            ],
+        }
+        if metadata_expression:
+            body["tools"][0]["fileSearch"]["metadataFilter"] = metadata_expression
+
+        if system_instruction:
+            body["system_instruction"] = {"parts": [{"text": system_instruction}]}
+
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.api_key,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(url, headers=headers, json=body)
         except httpx.TimeoutException as exc:
             raise GeminiRetryableError("Gemini REST 요청이 타임아웃되었습니다.") from exc
         except httpx.HTTPError as exc:
@@ -207,10 +309,10 @@ class GeminiFileSearchClient:
             "applied_filters": metadata_filters or [],
         }
 
-    def _sleep_backoff(self, attempt: int) -> None:
+    async def _sleep_backoff(self, attempt: int) -> None:
         sleep_seconds = min(5.0, self.retry_backoff_seconds * (attempt + 1))
         try:
-            time.sleep(sleep_seconds)
+            await asyncio.sleep(sleep_seconds)
         except Exception:  # pragma: no cover
             pass
 

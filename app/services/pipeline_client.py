@@ -23,10 +23,11 @@ class PipelineClient:
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
 
-    def _request(self, method: str, path: str, json: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def _request(self, method: str, path: str, json: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         url = f"{self.base_url}{path}"
         try:
-            response = httpx.request(method, url, json=json, timeout=self.timeout)
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.request(method, url, json=json)
         except httpx.RequestError as exc:
             raise PipelineClientError(status.HTTP_502_BAD_GATEWAY, f"Pipeline 서버에 연결할 수 없습니다: {exc}") from exc
 
@@ -43,23 +44,23 @@ class PipelineClient:
         except ValueError as exc:
             raise PipelineClientError(status.HTTP_502_BAD_GATEWAY, "Pipeline 응답을 JSON으로 파싱하지 못했습니다") from exc
 
-    def create_session(self) -> Dict[str, Any]:
-        return self._request("POST", "/session")
+    async def create_session(self) -> Dict[str, Any]:
+        return await self._request("POST", "/session")
 
-    def get_session(self, session_id: str) -> Dict[str, Any]:
-        return self._request("GET", f"/session/{session_id}")
+    async def get_session(self, session_id: str) -> Dict[str, Any]:
+        return await self._request("GET", f"/session/{session_id}")
 
-    def chat(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self._request("POST", "/chat", json=payload)
+    async def chat(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return await self._request("POST", "/chat", json=payload)
 
-    def get_status(self) -> Dict[str, Any]:
-        return self._request("GET", "/status")
+    async def get_status(self) -> Dict[str, Any]:
+        return await self._request("GET", "/status")
 
-    def list_common_products(self) -> Dict[str, Any]:
-        return self._request("GET", "/common-products")
+    async def list_common_products(self) -> Dict[str, Any]:
+        return await self._request("GET", "/common-products")
 
-    def trigger_sync(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return self._request("POST", "/sync", json=payload)
+    async def trigger_sync(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return await self._request("POST", "/sync", json=payload)
 
 
 @lru_cache
