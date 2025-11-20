@@ -1,5 +1,6 @@
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional
+import inspect
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -23,6 +24,13 @@ def _handle_error(exc: PipelineClientError) -> HTTPException:
     return HTTPException(status_code=exc.status_code, detail=exc.details)
 
 
+async def _maybe_await(value):
+    """Await the value if needed to support sync test doubles."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
 @router.post("/chat", response_model=ChatResponse, response_model_by_alias=True)
 async def chat(
     request: ChatRequest,
@@ -35,7 +43,7 @@ async def chat(
     session = await repository.get(request.session_id)
     if not session:
         try:
-            session = await pipeline.get_session(request.session_id)
+            session = await _maybe_await(pipeline.get_session(request.session_id))
         except PipelineClientError as exc:
             raise _handle_error(exc)
         await repository.save(session)
@@ -51,30 +59,32 @@ async def chat(
         await repository.save(session)
 
     if common_handler and common_handler.can_handle(request):
-        response = await common_handler.handle(request, history=history_texts)
+        response = await _maybe_await(common_handler.handle(request, history=history_texts))
         await repository.append_question(request.session_id, request.query)
         return response
 
     if ticket_handler and ticket_handler.can_handle(request):
-        payload, ticket_result = await ticket_handler.handle(
-            request,
-            history=history_texts,
-            clarification_state=clarification_state,
+        payload, ticket_result = await _maybe_await(
+            ticket_handler.handle(
+                request,
+                history=history_texts,
+                clarification_state=clarification_state,
+            )
         )
         if ticket_result:
             await repository.record_analyzer_result(request.session_id, ticket_result)
         await repository.append_question(request.session_id, request.query)
         return ChatResponse.model_validate(payload)
 
-    analyzer_result = (
-        await analyzer.analyze(
-            request.query,
-            clarification_option=request.clarification_option,
-            clarification_state=clarification_state,
+    analyzer_result = None
+    if analyzer:
+        analyzer_result = await _maybe_await(
+            analyzer.analyze(
+                request.query,
+                clarification_option=request.clarification_option,
+                clarification_state=clarification_state,
+            )
         )
-        if analyzer
-        else None
-    )
 
     payload = {
         "query": request.query,
@@ -88,7 +98,7 @@ async def chat(
         payload["commonProduct"] = request.common_product
 
     try:
-        response = await pipeline.chat(payload)
+        response = await _maybe_await(pipeline.chat(payload))
     except PipelineClientError as exc:
         raise _handle_error(exc)
 
@@ -130,7 +140,7 @@ async def chat_stream(
     session = await repository.get(request.session_id)
     if not session:
         try:
-            session = await pipeline.get_session(request.session_id)
+            session = await _maybe_await(pipeline.get_session(request.session_id))
         except PipelineClientError as exc:
             raise _handle_error(exc)
         await repository.save(session)
@@ -159,4 +169,3 @@ async def chat_stream(
             yield _format_sse("error", {"message": "잠시 후 다시 시도해 주세요."})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
-

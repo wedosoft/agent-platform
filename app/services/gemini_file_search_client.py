@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import asyncio
 import json
 import logging
 import time
+from dataclasses import asdict
 from typing import Any, Dict, Generator, List, Optional, AsyncGenerator
 
 import httpx
@@ -306,7 +306,7 @@ class GeminiFileSearchClient:
             "text": text or "검색 결과를 가져오지 못했습니다. 다시 시도해 주세요.",
             "grounding_chunks": grounding_chunks,
             "store_names": store_names,
-            "applied_filters": metadata_filters or [],
+            "applied_filters": [asdict(f) for f in (metadata_filters or [])],
         }
 
     async def _sleep_backoff(self, attempt: int) -> None:

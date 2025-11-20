@@ -38,7 +38,27 @@ class QueryFilterAnalyzer:
                 fallback_model=settings.gemini_fallback_model,
             )
 
-    async def analyze(
+    def analyze(
+        self,
+        query: str,
+        *,
+        clarification_option: Optional[str] = None,
+        clarification_state: Optional[dict] = None,
+    ) -> AnalyzerResult:
+        """Hybrid entrypoint that works in sync tests and async handlers."""
+        coro = self._analyze(
+            query,
+            clarification_option=clarification_option,
+            clarification_state=clarification_state,
+        )
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        else:
+            return loop.create_task(coro)
+
+    async def _analyze(
         self,
         query: str,
         *,

@@ -47,7 +47,12 @@ class CommonChatHandler:
         enhanced_query = request.query
 
         if request.common_product:
-            metadata_filters.append(MetadataFilter(key="product", value=request.common_product, operator="EQUALS"))
+            # 메타데이터 필터: 대소문자 호환성을 위해 다양한 케이스 포함
+            product_val = request.common_product.strip()
+            candidates = {product_val, product_val.lower(), product_val.title(), product_val.upper()}
+            value_str = ",".join(candidates)
+            metadata_filters.append(MetadataFilter(key="product", value=value_str, operator="IN"))
+
             filter_summaries.append(f"제품={request.common_product}")
             enhanced_query = f"[{request.common_product}] {request.query}"
 
@@ -79,7 +84,12 @@ class CommonChatHandler:
         enhanced_query = request.query
 
         if request.common_product:
-            metadata_filters.append(MetadataFilter(key="product", value=request.common_product, operator="EQUALS"))
+            # 메타데이터 필터: 대소문자 호환성을 위해 다양한 케이스 포함
+            product_val = request.common_product.strip()
+            candidates = {product_val, product_val.lower(), product_val.title(), product_val.upper()}
+            value_str = ",".join(candidates)
+            metadata_filters.append(MetadataFilter(key="product", value=value_str, operator="IN"))
+
             filter_summaries.append(f"제품={request.common_product}")
             enhanced_query = f"[{request.common_product}] {request.query}"
 

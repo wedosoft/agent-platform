@@ -28,18 +28,18 @@ def _build_metadata_expression(filters: Optional[Iterable[MetadataFilter]]) -> O
             if not values:
                 continue
             if len(values) == 1:
-                escaped = values[0].replace('"', '\"')
-                expressions.append(f"{metadata.key} = \"{escaped}\"")
+                escaped = values[0].replace('"', '\\"')
+                expressions.append(f'{metadata.key} = "{escaped}"')
             else:
                 clauses = []
                 for value in values:
-                    escaped_value = value.replace('"', '\"')
-                    clauses.append(f"{metadata.key} = \"{escaped_value}\"")
+                    escaped_value = value.replace('"', '\\"')
+                    clauses.append(f'{metadata.key} = "{escaped_value}"')
                 expressions.append("(" + " OR ".join(clauses) + ")")
             continue
         operator = operator_map.get(metadata.operator or "EQUALS", "=")
-        escaped_value = metadata.value.replace('"', '\"')
-        expressions.append(f"{metadata.key} {operator} \"{escaped_value}\"")
+        escaped_value = metadata.value.replace('"', '\\"')
+        expressions.append(f'{metadata.key} {operator} "{escaped_value}"')
 
     if not expressions:
         return None
