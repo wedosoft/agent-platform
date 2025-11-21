@@ -1,0 +1,19 @@
+{
+  "freshservice-sk": {
+    "product": "freshservice",
+    "pipeline_type": "freshdesk_rag",
+    "metadata_filters": [
+      {
+        "key": "product",
+        "value": "freshservice",
+        "operator": "EQUALS"
+      }
+    ],
+    "gemini": {
+      "store_names": [
+        "fileSearchStores/freshworkskb20251121-5rd728ruhk21"
+      ],
+      "default_store": "fileSearchStores/freshworkskb20251121-5rd728ruhk21"
+    }
+  }
+}

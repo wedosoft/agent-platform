@@ -15,12 +15,14 @@ class SessionCreateResponse(SessionBase):
     session_id: str = Field(alias="sessionId")
     created_at: datetime = Field(alias="createdAt")
     ttl_minutes: int = Field(alias="ttlMinutes")
+    tenant_id: Optional[str] = Field(default=None, alias="tenantId")
 
 
 class SessionDetailResponse(SessionBase):
     session_id: str = Field(alias="sessionId")
     created_at: datetime = Field(alias="createdAt")
     updated_at: datetime = Field(alias="updatedAt")
+    tenant_id: Optional[str] = Field(default=None, alias="tenantId")
     question_history: List[Any] = Field(default_factory=list, alias="questionHistory")
     analyzer_responses: Optional[List[Any]] = Field(default=None, alias="analyzerResponses")
     clarification_state: Optional[Any] = Field(default=None, alias="clarificationState")

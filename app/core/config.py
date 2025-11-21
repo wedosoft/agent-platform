@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     freshdesk_domain: Optional[str] = None
     freshdesk_api_key: Optional[str] = None
 
+    # Multi-tenant config (JSON or file path)
+    tenant_config: Optional[str] = None
+    tenant_config_path: Optional[str] = None
+
     model_config = SettingsConfigDict(
         env_prefix="AGENT_PLATFORM_",
         env_file=(".env", ".env.local"),

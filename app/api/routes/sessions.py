@@ -14,11 +14,12 @@ router = APIRouter(tags=["sessions"])
 async def create_session(repository: SessionRepository = Depends(get_session_repository)) -> SessionCreateResponse:
     settings = get_settings()
     session_id = uuid4().hex
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
     record = {
         "sessionId": session_id,
-        "createdAt": now,
-        "updatedAt": now,
+        "createdAt": now_iso,
+        "updatedAt": now_iso,
         "questionHistory": [],
     }
     await repository.save(record)
