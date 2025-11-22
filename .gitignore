@@ -13,3 +13,4 @@ uvicorn.log
 
 .gemini/
 gha-creds-*.json
+
