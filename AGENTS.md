@@ -46,3 +46,9 @@
 - Before opening a PR: run `pytest -q` and local `uvicorn` smoke test if APIs changed; note any failing scenarios explicitly.
 - PR description should include purpose, major changes, test evidence, and linked issue/ticket. Add screenshots or sample requests for API/interface changes.
 - Keep diffs focused; prefer separate PRs for unrelated changes (infra vs feature vs docs).
+
+## Instruction Verification
+- 사용자 요구사항을 작업 전 체크리스트로 정리하고, 각 항목이 어느 파일/라인에서 충족되는지 명시한다.
+- 요구사항 충족 여부를 설명할 때는 실제 코드/로그 근거(파일 경로와 라인 번호 포함)를 함께 제시한다.
+- 핵심 동작이나 데이터 흐름에 대한 답변 전에는 dry-run이나 최소한의 재현 절차로 실제 결과를 확인한다.
+- 의심스러운 부분이나 사용자의 지적이 있으면 즉시 코드를 다시 확인하고 근거와 함께 상황을 공유한다.

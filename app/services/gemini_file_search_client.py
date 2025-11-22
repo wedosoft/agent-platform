@@ -344,6 +344,7 @@ class GeminiFileSearchClient:
             or metadata.get("grounding_chunks")
             or []
         )
+        
         safe_chunks: List[Any] = []
         for chunk in chunks:
             # Handle Web Source (URI/Title)

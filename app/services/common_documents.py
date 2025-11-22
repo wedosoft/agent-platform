@@ -109,6 +109,22 @@ class CommonDocumentsService:
         next_cursor = self._build_cursor(records)
         return CommonDocumentsFetchResult(records=records, cursor=next_cursor)
 
+    def fetch_by_slugs(self, slugs: List[str], columns: Optional[Iterable[str]] = None) -> List[Dict[str, Any]]:
+        if not slugs:
+            return []
+        
+        selected_columns = self._prepare_columns(columns)
+        # Supabase 'in' filter takes a list of values
+        # We need to chunk if too many slugs, but for now assume reasonable number (e.g. < 20)
+        query = (
+            self.client.table(self.config.table_name)
+            .select(",".join(selected_columns))
+            .in_("slug", slugs)
+        )
+        
+        response = query.execute()
+        return self._extract_records(response, "fetch by slugs")
+
     def count_documents(self, product: Optional[str] = None) -> int:
         query = self.client.table(self.config.table_name).select(
             "id",

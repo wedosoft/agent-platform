@@ -57,7 +57,9 @@ def build_metadata(record: Dict, *, lang: str, default_doc_type: str = "article"
 
     add("product", record.get("product"))
     add("locale", lang)
-    add("slug", record.get("slug") or record.get("full_path") or record.get("short_slug"))
+    add("slug", record.get("slug"))
+    add("full_path", record.get("full_path"))
+    add("short_slug", record.get("short_slug"))
     add("doc_type", default_doc_type)
     add("category_id", record.get("category_id"))
     add("folder_id", record.get("folder_id"))
