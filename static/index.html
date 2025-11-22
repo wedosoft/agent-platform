@@ -102,7 +102,7 @@
         const payload = {
             sessionId: 'web-session-' + Date.now(), // Simple session ID generation
             query: query,
-            commonProduct: product || null,
+            product: product || null,
             // Using a default store name if backend requires it, 
             // but typically backend config defaults this if not provided or handled via common_chat_handler logic.
             // However, CommonChatHandler checks `ragStoreName` or `sources` matching store name.

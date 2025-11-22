@@ -122,18 +122,21 @@ async def chat_stream(
     query: str = Query(...),
     rag_store_name: Optional[str] = Query(None, alias="ragStoreName"),
     sources: Optional[List[str]] = Query(None, alias="sources"),
-    common_product: Optional[str] = Query(None, alias="commonProduct"),
+    product: Optional[str] = Query(None, alias="product"),
+    legacy_common_product: Optional[str] = Query(None, alias="commonProduct"),
     clarification_option: Optional[str] = Query(None, alias="clarificationOption"),
     pipeline: PipelineClient = Depends(get_pipeline_client),
     repository: SessionRepository = Depends(get_session_repository),
     common_handler: Optional[CommonChatHandler] = Depends(get_common_chat_handler),
 ) -> StreamingResponse:
+    effective_product = product or legacy_common_product
+
     request = ChatRequest(
         sessionId=session_id,
         query=query,
         ragStoreName=rag_store_name,
         sources=sources or None,
-        commonProduct=common_product,
+        commonProduct=effective_product,
         clarificationOption=clarification_option,
     )
 

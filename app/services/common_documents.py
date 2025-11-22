@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from postgrest import APIResponse
 from postgrest.types import CountMethod
@@ -79,11 +79,13 @@ class CommonDocumentsService:
         product: Optional[str] = None,
         cursor: Optional[CommonDocumentCursor] = None,
         updated_since: Optional[str] = None,
+        columns: Optional[Iterable[str]] = None,
     ) -> CommonDocumentsFetchResult:
         page_limit = limit or self.config.batch_size
+        selected_columns = self._prepare_columns(columns)
         query = (
             self.client.table(self.config.table_name)
-            .select(",".join(COMMON_DOCUMENT_COLUMNS))
+            .select(",".join(selected_columns))
             .order("updated_at", desc=False)
             .order("id", desc=False)
             .limit(page_limit)
@@ -176,6 +178,15 @@ class CommonDocumentsService:
         self._ensure_no_error(response, context)
         data = response.data or []
         return list(data)
+
+    def _prepare_columns(self, columns: Optional[Iterable[str]]) -> List[str]:
+        base = list(columns) if columns else list(COMMON_DOCUMENT_COLUMNS)
+        required = {"id", "updated_at"}
+        existing = {col for col in base}
+        for col in required:
+            if col not in existing:
+                base.append(col)
+        return base
 
 
 def _build_common_documents_service() -> CommonDocumentsService:

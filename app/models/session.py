@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from pydantic.config import ConfigDict
 
 
@@ -39,7 +39,11 @@ class ChatRequest(BaseModel):
     query: str
     rag_store_name: Optional[str] = Field(default=None, alias="ragStoreName")
     sources: Optional[List[str]] = None
-    common_product: Optional[str] = Field(default=None, alias="commonProduct")
+    common_product: Optional[str] = Field(
+        default=None,
+        alias="commonProduct",
+        validation_alias=AliasChoices("product", "commonProduct"),
+    )
     clarification_option: Optional[str] = Field(default=None, alias="clarificationOption")
 
 

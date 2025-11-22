@@ -78,7 +78,7 @@ def test_agent_chat_applies_common_product_filter(test_client, stub_agent_servic
     payload = {
         "sessionId": session_id,
         "query": "Freshservice 티켓 자산 연동",
-        "commonProduct": "custom-product",
+        "product": "custom-product",
     }
     response = test_client.post(f"/api/agents/{tenant_id}/chat", json=payload)
     assert response.status_code == 200
@@ -90,3 +90,18 @@ def test_agent_chat_applies_common_product_filter(test_client, stub_agent_servic
     metadata_filters = gemini_calls[0]["metadata_filters"]
     assert any(f.key == "product" and f.value == "custom-product" for f in metadata_filters)
     assert any(f.key == "priority" for f in metadata_filters), "분석기 필터가 유지되어야 합니다"
+
+
+def test_agent_chat_accepts_legacy_common_product_param(test_client, stub_agent_service, tenant_id):
+    session = test_client.post(f"/api/agents/{tenant_id}/session").json()
+    session_id = session["sessionId"]
+
+    payload = {
+        "sessionId": session_id,
+        "query": "Google Workspace 연동",
+        "commonProduct": "legacy-product",
+    }
+    response = test_client.post(f"/api/agents/{tenant_id}/chat", json=payload)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["filters"][0] == "제품=legacy-product"

@@ -231,6 +231,14 @@ async def wipe_store_documents(api_key: str, store_name: str) -> None:
     LOGGER.info("스토어 문서 삭제 완료: %s개", deleted)
 
 
+def parse_columns_arg(value: Optional[str]) -> Optional[List[str]]:
+    if not value:
+        return None
+    items = [item.strip() for item in value.split(",")]
+    cleaned = [item for item in items if item]
+    return cleaned or None
+
+
 async def reupload(
     *,
     store_id: str,
@@ -245,6 +253,8 @@ async def reupload(
     concurrency: int,
     upload_timeout: float,
     upload_attempts: int,
+    columns: Optional[List[str]] = None,
+    skip_count: int = 0,
 ) -> Optional[CommonDocumentCursor]:
     load_dotenv(".env.local")
     settings = get_settings()
@@ -269,7 +279,12 @@ async def reupload(
     if wipe_first:
         await wipe_store_documents(api_key, store_name)
 
-    total = 0
+    if skip_count < 0:
+        raise ValueError("skip_count 는 0 이상이어야 합니다.")
+
+    skipped = 0
+    produced = 0
+    stop_requested = False
     cursor: Optional[CommonDocumentCursor] = None
     if resume_updated_at and resume_id:
         cursor = CommonDocumentCursor(id=resume_id, updated_at=resume_updated_at)
@@ -277,7 +292,12 @@ async def reupload(
     last_cursor: Optional[CommonDocumentCursor] = None
     sem = asyncio.Semaphore(max(1, concurrency))
     while True:
-        batch = service.fetch_documents(limit=limit, product=product, cursor=cursor)
+        batch = service.fetch_documents(
+            limit=limit,
+            product=product,
+            cursor=cursor,
+            columns=columns,
+        )
         records = batch.records
         if not records:
             break
@@ -293,6 +313,12 @@ async def reupload(
                     continue
                 metadata = build_metadata(record, lang=lang)
                 filename = record.get("slug") or record.get("title_ko") or f"doc-{record.get('id')}"
+                if skipped < skip_count:
+                    skipped += 1
+                    break
+                if limit and produced >= limit:
+                    stop_requested = True
+                    break
                 if dry_run:
                     LOGGER.info("[dry-run] 업로드 예정: %s (%s) meta=%s", filename, lang, metadata)
                 else:
@@ -309,18 +335,18 @@ async def reupload(
                         )
                     )
                     tasks.append(task)
-                total += 1
+                produced += 1
                 break  # 언어 한 개만 업로드
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for r in results:
                 if isinstance(r, Exception):
                     raise r
-        if limit and total >= limit:
+        if stop_requested:
             break
         if not cursor:
             break
-    LOGGER.info("총 업로드(또는 dry-run) 문서 수: %s", total)
+    LOGGER.info("총 업로드(또는 dry-run) 문서 수: %s", produced)
     if last_cursor:
         LOGGER.info(
             "다음 실행 시 이어서 업로드하려면 --resume-updated-at %s --resume-id %s 를 사용하세요",
@@ -373,11 +399,22 @@ def parse_args() -> argparse.Namespace:
         "--resume-id",
         help="이어 업로드 시작할 마지막 문서 id. --resume-updated-at과 함께 사용",
     )
+    parser.add_argument(
+        "--columns",
+        help="Supabase에서 읽어올 컬럼을 콤마로 지정 (기본은 전체)",
+    )
+    parser.add_argument(
+        "--skip-count",
+        type=int,
+        default=0,
+        help="선행 문서 N건을 건너뛰고 업로드 (병렬 실행 시 사용)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    columns = parse_columns_arg(args.columns)
     asyncio.run(
         reupload(
             store_id=args.store_id,
@@ -392,6 +429,8 @@ def main() -> None:
             concurrency=args.concurrency,
             upload_timeout=args.upload_timeout,
             upload_attempts=args.upload_attempts,
+            columns=columns,
+            skip_count=args.skip_count,
         )
     )
 

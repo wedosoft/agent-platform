@@ -27,7 +27,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
 from app.services.common_documents import CommonDocumentCursor
-from scripts.reupload_with_metadata import reupload
+from scripts.reupload_with_metadata import parse_columns_arg, reupload
 
 
 async def run_batches(args: argparse.Namespace) -> None:
@@ -53,6 +53,8 @@ async def run_batches(args: argparse.Namespace) -> None:
                     concurrency=args.concurrency,
                     upload_timeout=args.upload_timeout,
                     upload_attempts=args.upload_attempts,
+                    columns=args.columns,
+                    skip_count=args.skip_count,
                 )
                 if not cursor:
                     print("업로드할 문서가 더 이상 없습니다. 작업을 종료합니다.")
@@ -122,7 +124,19 @@ def parse_args() -> argparse.Namespace:
         help="기존 배치 이후 이어서 시작할 updated_at 값",
     )
     parser.add_argument("--resume-id", help="기존 배치 이후 이어서 시작할 문서 ID")
-    return parser.parse_args()
+    parser.add_argument(
+        "--columns",
+        help="Supabase에서 읽어올 컬럼을 콤마로 지정 (기본은 전체)",
+    )
+    parser.add_argument(
+        "--skip-count",
+        type=int,
+        default=0,
+        help="선행 문서를 건너뛰고 업로드 (병렬 실행 시 사용)",
+    )
+    args = parser.parse_args()
+    args.columns = parse_columns_arg(args.columns)
+    return args
 
 
 def main() -> None:
