@@ -18,3 +18,8 @@ primary_region = 'nrt'
 
 [env]
   PORT = "8000"
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
