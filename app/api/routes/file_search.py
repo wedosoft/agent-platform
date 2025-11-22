@@ -104,6 +104,7 @@ async def upload_document(
     """스토어에 문서 업로드."""
     try:
         import json
+        import traceback
         
         parsed_metadata = []
         if metadata:
@@ -118,7 +119,10 @@ async def upload_document(
         )
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        error_detail = str(e) if str(e) else repr(e)
+        traceback.print_exc()
+        print(f"[ERROR] Upload failed: {error_detail}")
+        raise HTTPException(status_code=500, detail=error_detail)
 
 
 @router.delete("/documents/{document_name:path}")

@@ -8,3 +8,13 @@ INFO:     127.0.0.1:58385 - "GET /api/file-search/stores HTTP/1.1" 200 OK
 INFO:     127.0.0.1:58404 - "GET /api/file-search/stores HTTP/1.1" 200 OK
 INFO:     127.0.0.1:58404 - "GET /api/file-search/stores HTTP/1.1" 200 OK
 INFO:     127.0.0.1:58420 - "GET /api/file-search/stores/fileSearchStores/freshworkskb20251122-yri7eholu2qr/documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58659 - "GET /api/file-search/stores HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58707 - "GET /api/file-search/stores HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58720 - "GET /api/file-search/stores/fileSearchStores/freshworkskb20251122-yri7eholu2qr/documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58747 - "GET /api/file-search/stores HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58768 - "GET /api/file-search/stores HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58768 - "GET /api/file-search/stores/fileSearchStores/freshworkskb20251122-yri7eholu2qr/documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58781 - "POST /api/file-search/stores/fileSearchStores/freshworkskb20251122-yri7eholu2qr/documents HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:58899 - "GET /api/file-search/stores HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58949 - "GET /api/file-search/stores/fileSearchStores/freshworkskb20251122-yri7eholu2qr/documents HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59053 - "POST /api/file-search/stores/fileSearchStores/freshworkskb20251122-yri7eholu2qr/documents HTTP/1.1" 500 Internal Server Error

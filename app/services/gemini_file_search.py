@@ -126,10 +126,14 @@ async def upload_document_to_store(
     file_name: str,
     file_content: bytes,
     metadata: Optional[List[Dict[str, str]]] = None,
+    max_retries: int = 3
 ) -> Dict[str, Any]:
-    """스토어에 문서 업로드."""
-    # 1. 업로드 시작
-    start_url = f"{BASE_URL}/{store_name}:uploadToFileSearchStore"
+    """스토어에 문서 업로드 (재시도 로직 포함)."""
+    import asyncio
+    
+    # 업로드 전용 엔드포인트 사용 (BASE_URL이 아닌 upload 경로)
+    upload_base_url = "https://generativelanguage.googleapis.com/upload/v1beta"
+    start_url = f"{upload_base_url}/{store_name}:uploadToFileSearchStore"
     start_headers = {
         "x-goog-api-key": GEMINI_API_KEY,
         "X-Goog-Upload-Protocol": "resumable",
@@ -150,30 +154,47 @@ async def upload_document_to_store(
             for m in metadata if m.get("key") and m.get("value")
         ]
     
-    async with httpx.AsyncClient(timeout=60) as client:
-        # 업로드 시작
-        start_response = await client.post(start_url, headers=start_headers, json=start_body)
-        start_response.raise_for_status()
-        
-        upload_url = start_response.headers.get("X-Goog-Upload-URL")
-        if not upload_url:
-            raise RuntimeError("업로드 URL을 받지 못했습니다.")
-        
-        # 파일 업로드
-        upload_headers = {
-            "Content-Length": str(len(file_content)),
-            "X-Goog-Upload-Offset": "0",
-            "X-Goog-Upload-Command": "upload, finalize",
-        }
-        
-        upload_response = await client.put(upload_url, headers=upload_headers, content=file_content)
-        upload_response.raise_for_status()
-        
-        result = upload_response.json()
-        return {
-            "name": result.get("name"),
-            "displayName": result.get("displayName", file_name),
-        }
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            # 대용량 파일 업로드를 위해 타임아웃을 5분으로 설정
+            async with httpx.AsyncClient(timeout=300) as client:
+                # 업로드 시작
+                start_response = await client.post(start_url, headers=start_headers, json=start_body)
+                start_response.raise_for_status()
+                
+                # 헤더에서 업로드 URL 확인
+                upload_url = start_response.headers.get("X-Goog-Upload-URL")
+                if not upload_url:
+                    raise RuntimeError("업로드 URL을 받지 못했습니다.")
+                
+                # 파일 업로드 (타임아웃 5분)
+                upload_headers = {
+                    "Content-Type": "text/plain; charset=utf-8",
+                    "X-Goog-Upload-Command": "upload, finalize",
+                    "X-Goog-Upload-Protocol": "resumable",
+                    "X-Goog-Upload-Offset": "0",
+                }
+                
+                upload_response = await client.post(upload_url, headers=upload_headers, content=file_content)
+                upload_response.raise_for_status()
+                
+                result = upload_response.json()
+                return {
+                    "name": result.get("name"),
+                    "displayName": result.get("displayName", file_name),
+                }
+        except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.RequestError) as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 2  # 2초, 4초, 6초
+                print(f"[RETRY] Upload failed (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s: {e}")
+                await asyncio.sleep(wait_time)
+            else:
+                print(f"[ERROR] Upload failed after {max_retries} attempts: {e}")
+                raise last_error
+    
+    raise last_error or RuntimeError("Upload failed")
 
 
 async def delete_document(document_name: str) -> None:
