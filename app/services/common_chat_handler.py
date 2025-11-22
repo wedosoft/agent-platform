@@ -45,6 +45,8 @@ class CommonChatHandler:
         return all(source == self.store_name for source in sources)
 
     def _enrich_chunks_with_metadata(self, chunks: List[dict]) -> List[dict]:
+        LOGGER.info("🔍 Enrichment called with %d chunks, has service: %s", len(chunks) if chunks else 0, bool(self.documents_service))
+        
         if not self.documents_service or not chunks:
             return chunks
 
@@ -54,6 +56,7 @@ class CommonChatHandler:
         for chunk in chunks:
             retrieved = chunk.get("retrievedContext") or {}
             title = retrieved.get("title")
+            LOGGER.debug("Processing chunk title: %s", title)
             if not title:
                 continue
             
@@ -71,12 +74,16 @@ class CommonChatHandler:
                 # Map title to slug for later lookup
                 slug_map[title] = slug
 
+        LOGGER.info("📚 Fetching %d slugs from Supabase: %s", len(slugs_to_fetch), list(slugs_to_fetch))
+        
         if not slugs_to_fetch:
             return chunks
 
         try:
-            docs = self.documents_service.fetch_by_slugs(list(slugs_to_fetch), columns=["slug", "full_path", "title_ko", "title_en"])
+            docs = self.documents_service.fetch_by_slugs(list(slugs_to_fetch), columns=["slug", "csv_id", "short_slug", "product", "title_ko", "title_en"])
             doc_map = {doc["slug"]: doc for doc in docs}
+            
+            LOGGER.info("✅ Fetched %d documents", len(doc_map))
             
             for chunk in chunks:
                 retrieved = chunk.get("retrievedContext") or {}
@@ -87,10 +94,24 @@ class CommonChatHandler:
                 slug = slug_map.get(title)
                 if slug and slug in doc_map:
                     doc = doc_map[slug]
-                    # Inject metadata
-                    retrieved["uri"] = doc.get("full_path")
-                    # Optionally update title if needed, but keeping original is fine
-                    # retrieved["title"] = doc.get("title_ko") or doc.get("title_en") or title
+                    # Build URL: /docs/{product}/{csv_id}-{short_slug}
+                    product = doc.get("product")
+                    csv_id = doc.get("csv_id")
+                    short_slug = doc.get("short_slug")
+                    
+                    if product and csv_id and short_slug:
+                        doc_url = f"/docs/{product}/{csv_id}-{short_slug}"
+                        retrieved["uri"] = doc_url
+                        LOGGER.info("🔗 Injected URI for '%s': %s", title, doc_url)
+                    else:
+                        LOGGER.warning("Missing URL components for '%s': product=%s, csv_id=%s, short_slug=%s", 
+                                     title, product, csv_id, short_slug)
+                    
+                    # Update title to Korean title if available
+                    title_ko = doc.get("title_ko")
+                    if title_ko:
+                        retrieved["title"] = title_ko
+                        LOGGER.info("📝 Updated title for '%s': %s", title, title_ko)
         except Exception as e:
             LOGGER.warning("Failed to enrich chunks with metadata: %s", e)
 

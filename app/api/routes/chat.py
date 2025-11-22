@@ -40,6 +40,18 @@ async def chat(
     analyzer: Optional[QueryFilterAnalyzer] = Depends(get_query_filter_analyzer),
     ticket_handler: Optional[TicketChatHandler] = Depends(get_ticket_chat_handler),
 ) -> ChatResponse:
+    # common_handler가 처리 가능하면 Pipeline 없이 직접 처리
+    if common_handler and common_handler.can_handle(request):
+        session = await repository.get(request.session_id)
+        conversation_history = session.get("questionHistory") if session and isinstance(session, dict) else []
+        history_texts = []
+        if isinstance(conversation_history, list):
+            history_texts = [str(entry) for entry in conversation_history if isinstance(entry, str)]
+        
+        response = await _maybe_await(common_handler.handle(request, history=history_texts))
+        await repository.append_question(request.session_id, request.query)
+        return response
+    
     session = await repository.get(request.session_id)
     if not session:
         try:
@@ -57,11 +69,6 @@ async def chat(
     if request.clarification_option and clarification_state and isinstance(session, dict):
         session.pop("clarificationState", None)
         await repository.save(session)
-
-    if common_handler and common_handler.can_handle(request):
-        response = await _maybe_await(common_handler.handle(request, history=history_texts))
-        await repository.append_question(request.session_id, request.query)
-        return response
 
     if ticket_handler and ticket_handler.can_handle(request):
         payload, ticket_result = await _maybe_await(
