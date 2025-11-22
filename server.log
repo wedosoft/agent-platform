@@ -1,0 +1,10 @@
+INFO:     Will watch for changes in these directories: ['/Users/alan/GitHub/agent-platform']
+INFO:     Uvicorn running on http://localhost:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [79199] using WatchFiles
+INFO:     Started server process [79259]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     127.0.0.1:58385 - "GET /api/file-search/stores HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58404 - "GET /api/file-search/stores HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58404 - "GET /api/file-search/stores HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58420 - "GET /api/file-search/stores/fileSearchStores/freshworkskb20251122-yri7eholu2qr/documents HTTP/1.1" 200 OK
