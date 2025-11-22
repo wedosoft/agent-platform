@@ -90,19 +90,19 @@ class GeminiFileSearchClient:
         metadata_expression = _build_metadata_expression(metadata_filters)
         contents = self._build_contents(query, conversation_history)
 
-        yield {"event": "status", "data": {"message": "검색을 시작합니다."}}
+        yield {"event": "status", "data": {"message": "최적의 답변을 찾고 있습니다..."}}
 
         for model_name in self.models:
             yield {
                 "event": "status",
-                "data": {"message": f"{model_name} 모델로 검색 중입니다.", "model": model_name},
+                "data": {"message": "최적의 답변을 찾고 있습니다...", "model": model_name},
             }
             for attempt in range(self.max_attempts_per_model):
                 if attempt > 0:
                     yield {
                         "event": "status",
                         "data": {
-                            "message": "모델 과부하로 재시도 중입니다...",
+                            "message": "잠시만 기다려 주세요...",
                             "model": model_name,
                             "attempt": attempt + 1,
                         },
@@ -190,19 +190,19 @@ class GeminiFileSearchClient:
         metadata_expression = _build_metadata_expression(metadata_filters)
         contents = self._build_contents(query, conversation_history)
 
-        yield {"event": "status", "data": {"message": "검색을 시작합니다."}}
+        yield {"event": "status", "data": {"message": "최적의 답변을 찾고 있습니다..."}}
 
         for model_name in self.models:
             yield {
                 "event": "status",
-                "data": {"message": f"{model_name} 모델로 검색 중입니다.", "model": model_name},
+                "data": {"message": "최적의 답변을 찾고 있습니다...", "model": model_name},
             }
             for attempt in range(self.max_attempts_per_model):
                 if attempt > 0:
                     yield {
                         "event": "status",
                         "data": {
-                            "message": "모델 과부하로 재시도 중입니다...",
+                            "message": "잠시만 기다려 주세요...",
                             "model": model_name,
                             "attempt": attempt + 1,
                         },
