@@ -43,13 +43,14 @@ async def chat(
     # common_handler가 처리 가능하면 Pipeline 없이 직접 처리
     if common_handler and common_handler.can_handle(request):
         session = await repository.get(request.session_id)
-        conversation_history = session.get("questionHistory") if session and isinstance(session, dict) else []
-        history_texts = []
-        if isinstance(conversation_history, list):
-            history_texts = [str(entry) for entry in conversation_history if isinstance(entry, str)]
+        # Use conversationHistory (with roles) if available, fallback to questionHistory
+        conversation_history = []
+        if session and isinstance(session, dict):
+            conversation_history = session.get("conversationHistory", [])
         
-        response = await _maybe_await(common_handler.handle(request, history=history_texts))
-        await repository.append_question(request.session_id, request.query)
+        response = await _maybe_await(common_handler.handle(request, history=conversation_history))
+        # Save both question and answer as a turn
+        await repository.append_turn(request.session_id, request.query, response.text or "")
         return response
     
     session = await repository.get(request.session_id)
@@ -155,11 +156,13 @@ async def chat_stream(
             raise _handle_error(exc)
         await repository.save(session)
 
-    conversation_history = session.get("questionHistory") if isinstance(session, dict) else []
-    history_texts: List[str] = []
-    if isinstance(conversation_history, list):
-        snapshots = [str(entry) for entry in conversation_history if isinstance(entry, str)]
-        history_texts = snapshots[-2:]
+    # Use conversationHistory (with roles) if available
+    conversation_history: List[dict] = []
+    if isinstance(session, dict):
+        conversation_history = session.get("conversationHistory", [])
+        # Keep only last 4 turns (2 Q&A pairs) for streaming to reduce latency
+        if len(conversation_history) > 4:
+            conversation_history = conversation_history[-4:]
 
     async def event_stream():
         if not common_handler or not common_handler.can_handle(request):
@@ -167,11 +170,14 @@ async def chat_stream(
             return
 
         terminal_event_sent = False
-        async for event in common_handler.stream_handle(request, history=history_texts):
+        response_text = ""
+        async for event in common_handler.stream_handle(request, history=conversation_history):
             yield _format_sse(event["event"], event["data"])
             if event["event"] == "result":
                 terminal_event_sent = True
-                await repository.append_question(request.session_id, request.query)
+                response_text = event["data"].get("text", "")
+                # Save both question and answer as a turn
+                await repository.append_turn(request.session_id, request.query, response_text)
             if event["event"] == "error":
                 terminal_event_sent = True
                 break

@@ -52,11 +52,12 @@ class GeminiFileSearchClient:
         query: str,
         store_names: List[str],
         metadata_filters: Optional[List[MetadataFilter]] = None,
-        conversation_history: Optional[List[str]] = None,
+        conversation_history: Optional[List[dict]] = None,
         system_instruction: Optional[str] = None,
     ) -> dict[str, Any]:
         metadata_expression = _build_metadata_expression(metadata_filters)
         contents = self._build_contents(query, conversation_history)
+        LOGGER.info("Built contents with %d turns (history: %d)", len(contents), len(conversation_history or []))
 
         last_error: Optional[Exception] = None
         for model_name in self.models:
@@ -278,21 +279,45 @@ class GeminiFileSearchClient:
 
         return response.json()
 
-    def _build_contents(self, query: str, conversation_history: Optional[List[str]]) -> List[Dict[str, Any]]:
-        history_parts = [
-            {
-                "role": "user",
-                "parts": [{"text": entry}],
-            }
-            for entry in (conversation_history or [])
-            if isinstance(entry, str) and entry.strip()
-        ]
-        return history_parts + [
-            {
-                "role": "user",
-                "parts": [{"text": query}],
-            }
-        ]
+    def _build_contents(self, query: str, conversation_history: Optional[List[dict]] = None) -> List[Dict[str, Any]]:
+        """Build contents with proper user/model turn alternation.
+        
+        Args:
+            query: Current user query
+            conversation_history: List of dicts with 'role' (user/model) and 'text' keys
+        """
+        contents: List[Dict[str, Any]] = []
+        
+        # Add conversation history with proper roles
+        for turn in (conversation_history or []):
+            if isinstance(turn, dict) and "role" in turn and "text" in turn:
+                role = turn["role"]
+                text = turn["text"]
+                if role in ("user", "model") and text and text.strip():
+                    contents.append({
+                        "role": role,
+                        "parts": [{"text": text}],
+                    })
+            elif isinstance(turn, str) and turn.strip():
+                # Fallback for legacy string-only history (treat as user)
+                contents.append({
+                    "role": "user",
+                    "parts": [{"text": turn}],
+                })
+        
+        # Add current query
+        contents.append({
+            "role": "user",
+            "parts": [{"text": query}],
+        })
+        
+        LOGGER.info("📝 Conversation history: %d turns", len(contents) - 1)
+        for i, c in enumerate(contents):
+            role = c["role"]
+            text = c["parts"][0]["text"][:80].replace("\n", " ")
+            LOGGER.info("  [%d] %s: %s...", i, role, text)
+        
+        return contents
 
     def _build_response_payload(
         self,

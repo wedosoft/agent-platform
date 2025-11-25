@@ -19,8 +19,10 @@ LOGGER = logging.getLogger(__name__)
 
 SYSTEM_INSTRUCTION = (
     "You are a helpful customer support assistant. "
-    "Answer the user's question based ONLY on the provided search results (Context). "
-    "If the answer is not in the context, politely state that you cannot find the information."
+    "Answer ONLY the user's CURRENT question based on the provided search results (Context). "
+    "Do NOT repeat or re-answer previous questions from the conversation history. "
+    "If the answer is not in the context, politely state that you cannot find the information. "
+    "Keep your response focused and concise."
 )
 
 
@@ -117,7 +119,7 @@ class CommonChatHandler:
 
         return chunks
 
-    async def handle(self, request: ChatRequest, *, history: Optional[List[str]] = None) -> ChatResponse:
+    async def handle(self, request: ChatRequest, *, history: Optional[List[dict]] = None) -> ChatResponse:
         metadata_filters: List[MetadataFilter] = []
         filter_summaries: List[str] = []
         enhanced_query = request.query
@@ -154,7 +156,7 @@ class CommonChatHandler:
         }
         return ChatResponse.model_validate(payload)
 
-    async def stream_handle(self, request: ChatRequest, *, history: Optional[List[str]] = None):
+    async def stream_handle(self, request: ChatRequest, *, history: Optional[List[dict]] = None):
         metadata_filters: List[MetadataFilter] = []
         filter_summaries: List[str] = []
         enhanced_query = request.query

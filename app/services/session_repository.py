@@ -34,6 +34,11 @@ class SessionRepository(ABC):
         ...
 
     @abstractmethod
+    async def append_turn(self, session_id: str, question: str, answer: str) -> Optional[SessionRecord]:
+        """Append a complete conversation turn (user question + model answer)."""
+        ...
+
+    @abstractmethod
     async def record_analyzer_result(self, session_id: str, result: AnalyzerResult) -> None:
         ...
 
@@ -83,6 +88,20 @@ class InMemorySessionRepository(SessionRepository):
             return None
         history = record.setdefault("questionHistory", [])
         history.append(question)
+        record["updatedAt"] = datetime.now(timezone.utc).isoformat()
+        await self.save(record)
+        return record
+
+    async def append_turn(self, session_id: str, question: str, answer: str) -> Optional[SessionRecord]:
+        record = await self.get(session_id)
+        if not record:
+            return None
+        turns = record.setdefault("conversationHistory", [])
+        turns.append({"role": "user", "text": question})
+        turns.append({"role": "model", "text": answer})
+        # Keep last 10 turns (5 Q&A pairs) to avoid context overflow
+        if len(turns) > 10:
+            record["conversationHistory"] = turns[-10:]
         record["updatedAt"] = datetime.now(timezone.utc).isoformat()
         await self.save(record)
         return record
@@ -142,6 +161,20 @@ class RedisSessionRepository(SessionRepository):
             return None
         history = record.setdefault("questionHistory", [])
         history.append(question)
+        record["updatedAt"] = datetime.now(timezone.utc).isoformat()
+        await self.save(record)
+        return record
+
+    async def append_turn(self, session_id: str, question: str, answer: str) -> Optional[SessionRecord]:
+        record = await self.get(session_id)
+        if not record:
+            return None
+        turns = record.setdefault("conversationHistory", [])
+        turns.append({"role": "user", "text": question})
+        turns.append({"role": "model", "text": answer})
+        # Keep last 10 turns (5 Q&A pairs) to avoid context overflow
+        if len(turns) > 10:
+            record["conversationHistory"] = turns[-10:]
         record["updatedAt"] = datetime.now(timezone.utc).isoformat()
         await self.save(record)
         return record
