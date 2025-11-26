@@ -18,7 +18,7 @@ from app.services.multitenant_chat_handler import MultitenantChatHandler, get_mu
 from app.services.query_filter_analyzer import QueryFilterAnalyzer, get_query_filter_analyzer
 from app.services.session_repository import SessionRepository, get_session_repository
 
-router = APIRouter(prefix="/v1", tags=["multitenant"])
+router = APIRouter(tags=["multitenant"])
 
 
 def _format_sse(event: str, data: Dict[str, Any]) -> str:

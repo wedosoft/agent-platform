@@ -1,14 +1,35 @@
 import os
+import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api.router import get_api_router
 from app.core.config import get_settings
+from app.services.scheduler_service import get_scheduler_service
 
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
-app = FastAPI(title=settings.app_name)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """애플리케이션 시작/종료 시 스케줄러 관리"""
+    # Startup
+    scheduler = get_scheduler_service()
+    scheduler.start()
+    logger.info("Scheduler started")
+    
+    yield
+    
+    # Shutdown
+    scheduler.shutdown()
+    logger.info("Scheduler stopped")
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 allowed_origins = [
     "http://localhost:3000",

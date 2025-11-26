@@ -1,6 +1,17 @@
 from fastapi import APIRouter
 
-from app.api.routes import agents, chat, common_documents, file_search, health, multitenant, pipeline, sessions
+from app.api.routes import (
+    admin,
+    agents,
+    assist,
+    chat,
+    common_documents,
+    file_search,
+    health,
+    multitenant,
+    pipeline,
+    sessions,
+)
 from app.core.config import get_settings
 
 
@@ -14,5 +25,7 @@ def get_api_router() -> APIRouter:
     router.include_router(common_documents.router)
     router.include_router(pipeline.router)
     router.include_router(file_search.router)
-    router.include_router(multitenant.router)  # Multitenant routes at /api/v1/*
+    router.include_router(multitenant.router)  # Multitenant routes at /api/*
+    router.include_router(assist.router)  # FDK Custom App assist API
+    router.include_router(admin.router)  # Admin API for tenant management
     return router

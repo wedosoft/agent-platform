@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     redis_url: Optional[str] = None
     redis_session_prefix: str = "agent-platform-session"
 
+    # Admin API
+    admin_api_key: Optional[str] = None
+
     # Supabase (공통 문서)
     supabase_common_url: Optional[str] = None
     supabase_common_service_role_key: Optional[str] = None
