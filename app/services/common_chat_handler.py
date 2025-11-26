@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import threading
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import HTTPException, status
 
@@ -27,24 +27,42 @@ SYSTEM_INSTRUCTION = (
 
 
 class CommonChatHandler:
+    """모든 RAG 소스 (tickets, articles, common)를 처리하는 통합 핸들러"""
+    
     def __init__(
         self,
         *,
         gemini_client: GeminiFileSearchClient,
-        store_name: str,
+        store_names: Dict[str, str],  # {"tickets": "store_id", "articles": "store_id", "common": "store_id"}
         documents_service: Optional[CommonDocumentsService] = None,
     ) -> None:
         self.gemini_client = gemini_client
-        self.store_name = store_name
+        self.store_names = store_names  # source -> store_name 매핑
         self.documents_service = documents_service
 
     def can_handle(self, request: ChatRequest) -> bool:
-        if not self.store_name:
+        """사용 가능한 store가 하나라도 있으면 처리 가능"""
+        if not self.store_names:
             return False
+        
         sources = [source.strip() for source in (request.sources or []) if source.strip()]
         if not sources:
+            # sources 지정 안되면 기본적으로 처리
             return True
-        return all(source == self.store_name for source in sources)
+        
+        # 요청된 sources 중 하나라도 store_names에 있으면 처리 가능
+        return any(source in self.store_names for source in sources)
+
+    def _get_store_names_for_request(self, request: ChatRequest) -> List[str]:
+        """요청에 맞는 store names 반환"""
+        sources = [source.strip() for source in (request.sources or []) if source.strip()]
+        
+        if not sources:
+            # sources 지정 안되면 모든 사용 가능한 store 사용
+            return list(self.store_names.values())
+        
+        # 요청된 sources에 해당하는 store names만 반환
+        return [self.store_names[s] for s in sources if s in self.store_names]
 
     def _enrich_chunks_with_metadata(self, chunks: List[dict]) -> List[dict]:
         LOGGER.info("🔍 Enrichment called with %d chunks, has service: %s", len(chunks) if chunks else 0, bool(self.documents_service))
@@ -131,10 +149,16 @@ class CommonChatHandler:
             filter_summaries.append(f"제품={request.common_product}")
             enhanced_query = f"[{request.common_product}] {request.query}"
 
+        # 요청에 맞는 store names 가져오기
+        store_names_to_search = self._get_store_names_for_request(request)
+        sources_used = [s for s in (request.sources or []) if s in self.store_names] or list(self.store_names.keys())
+        
+        LOGGER.info("🔍 Searching stores: %s for sources: %s", store_names_to_search, sources_used)
+
         try:
             result = await self.gemini_client.search(
                 query=enhanced_query,
-                store_names=[self.store_name],
+                store_names=store_names_to_search,
                 metadata_filters=metadata_filters,
                 conversation_history=history,
                 system_instruction=SYSTEM_INSTRUCTION,
@@ -149,8 +173,8 @@ class CommonChatHandler:
         payload = {
             "text": result["text"],
             "groundingChunks": grounding_chunks,
-            "ragStoreName": self.store_name,
-            "sources": [self.store_name],
+            "ragStoreName": store_names_to_search[0] if store_names_to_search else None,
+            "sources": sources_used,
             "filters": filter_summaries,
             "knownContext": {},
         }
@@ -168,10 +192,14 @@ class CommonChatHandler:
             filter_summaries.append(f"제품={request.common_product}")
             enhanced_query = f"[{request.common_product}] {request.query}"
 
+        # 요청에 맞는 store names 가져오기
+        store_names_to_search = self._get_store_names_for_request(request)
+        sources_used = [s for s in (request.sources or []) if s in self.store_names] or list(self.store_names.keys())
+
         try:
             async for event in self.gemini_client.stream_search(
                 query=enhanced_query,
-                store_names=[self.store_name],
+                store_names=store_names_to_search,
                 metadata_filters=metadata_filters,
                 conversation_history=history,
                 system_instruction=SYSTEM_INSTRUCTION,
@@ -185,8 +213,8 @@ class CommonChatHandler:
 
                     payload.update(
                         {
-                            "ragStoreName": self.store_name,
-                            "sources": [self.store_name],
+                            "ragStoreName": store_names_to_search[0] if store_names_to_search else None,
+                            "sources": sources_used,
                             "filters": filter_summaries,
                             "knownContext": {},
                         }
@@ -205,9 +233,26 @@ class CommonChatHandler:
 def get_common_chat_handler() -> Optional[CommonChatHandler]:
     settings = get_settings()
     api_key = settings.gemini_api_key or os.getenv("GEMINI_API_KEY")
-    store_name = settings.gemini_store_common
-    if not api_key or not store_name:
+    
+    if not api_key:
         return None
+    
+    # 모든 사용 가능한 store 수집
+    store_names: Dict[str, str] = {}
+    
+    if settings.gemini_store_tickets:
+        store_names["tickets"] = settings.gemini_store_tickets
+    if settings.gemini_store_articles:
+        store_names["articles"] = settings.gemini_store_articles
+    if settings.gemini_store_common:
+        store_names["common"] = settings.gemini_store_common
+    
+    if not store_names:
+        LOGGER.warning("No Gemini stores configured")
+        return None
+    
+    LOGGER.info("🏪 Configured stores: %s", store_names)
+    
     client = GeminiFileSearchClient(
         api_key=api_key,
         primary_model=settings.gemini_primary_model,
@@ -216,6 +261,6 @@ def get_common_chat_handler() -> Optional[CommonChatHandler]:
     documents_service = get_common_documents_service()
     return CommonChatHandler(
         gemini_client=client, 
-        store_name=store_name,
+        store_names=store_names,
         documents_service=documents_service
     )

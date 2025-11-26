@@ -1,8 +1,9 @@
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 import inspect
+import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 import json
 
@@ -10,18 +11,15 @@ from app.models.session import ChatRequest, ChatResponse
 from app.services.common_chat_handler import CommonChatHandler, get_common_chat_handler
 from app.services.query_filter_analyzer import QueryFilterAnalyzer, get_query_filter_analyzer
 from app.services.ticket_chat_handler import TicketChatHandler, get_ticket_chat_handler
-from app.services.pipeline_client import PipelineClient, PipelineClientError, get_pipeline_client
 from app.services.session_repository import SessionRepository, get_session_repository
+
+LOGGER = logging.getLogger(__name__)
 
 router = APIRouter(tags=["chat"])
 
 
 def _format_sse(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-
-def _handle_error(exc: PipelineClientError) -> HTTPException:
-    return HTTPException(status_code=exc.status_code, detail=exc.details)
 
 
 async def _maybe_await(value):
@@ -34,37 +32,39 @@ async def _maybe_await(value):
 @router.post("/chat", response_model=ChatResponse, response_model_by_alias=True)
 async def chat(
     request: ChatRequest,
-    pipeline: PipelineClient = Depends(get_pipeline_client),
     repository: SessionRepository = Depends(get_session_repository),
     common_handler: Optional[CommonChatHandler] = Depends(get_common_chat_handler),
     analyzer: Optional[QueryFilterAnalyzer] = Depends(get_query_filter_analyzer),
     ticket_handler: Optional[TicketChatHandler] = Depends(get_ticket_chat_handler),
 ) -> ChatResponse:
-    # common_handler가 처리 가능하면 Pipeline 없이 직접 처리
+    """통합 채팅 엔드포인트 - 모든 sources (tickets, articles, common) 처리"""
+    
+    # 세션 가져오기 또는 생성
+    session = await repository.get(request.session_id)
+    if not session:
+        # 세션이 없으면 빈 세션 생성
+        session = {"sessionId": request.session_id, "conversationHistory": [], "questionHistory": []}
+        await repository.save(session)
+    
+    # 대화 히스토리
+    conversation_history = []
+    if session and isinstance(session, dict):
+        conversation_history = session.get("conversationHistory", [])
+    
+    # common_handler가 처리 가능하면 직접 처리
     if common_handler and common_handler.can_handle(request):
-        session = await repository.get(request.session_id)
-        # Use conversationHistory (with roles) if available, fallback to questionHistory
-        conversation_history = []
-        if session and isinstance(session, dict):
-            conversation_history = session.get("conversationHistory", [])
-        
+        LOGGER.info("🎯 CommonChatHandler handling request for sources: %s", request.sources)
         response = await _maybe_await(common_handler.handle(request, history=conversation_history))
         # Save both question and answer as a turn
         await repository.append_turn(request.session_id, request.query, response.text or "")
         return response
     
-    session = await repository.get(request.session_id)
-    if not session:
-        try:
-            session = await _maybe_await(pipeline.get_session(request.session_id))
-        except PipelineClientError as exc:
-            raise _handle_error(exc)
-        await repository.save(session)
-
-    conversation_history = session.get("questionHistory") if isinstance(session, dict) else []
+    # ticket_handler 처리
     history_texts = []
-    if isinstance(conversation_history, list):
-        history_texts = [str(entry) for entry in conversation_history if isinstance(entry, str)]
+    if isinstance(session, dict):
+        question_history = session.get("questionHistory", [])
+        if isinstance(question_history, list):
+            history_texts = [str(entry) for entry in question_history if isinstance(entry, str)]
 
     clarification_state = session.get("clarificationState") if isinstance(session, dict) else None
     if request.clarification_option and clarification_state and isinstance(session, dict):
@@ -72,6 +72,7 @@ async def chat(
         await repository.save(session)
 
     if ticket_handler and ticket_handler.can_handle(request):
+        LOGGER.info("🎫 TicketChatHandler handling request")
         payload, ticket_result = await _maybe_await(
             ticket_handler.handle(
                 request,
@@ -84,44 +85,12 @@ async def chat(
         await repository.append_question(request.session_id, request.query)
         return ChatResponse.model_validate(payload)
 
-    analyzer_result = None
-    if analyzer:
-        analyzer_result = await _maybe_await(
-            analyzer.analyze(
-                request.query,
-                clarification_option=request.clarification_option,
-                clarification_state=clarification_state,
-            )
-        )
-
-    payload = {
-        "query": request.query,
-        "sessionId": request.session_id,
-    }
-    if request.rag_store_name:
-        payload["ragStoreName"] = request.rag_store_name
-    if request.sources:
-        payload["sources"] = request.sources
-    if request.common_product:
-        payload["commonProduct"] = request.common_product
-
-    try:
-        response = await _maybe_await(pipeline.chat(payload))
-    except PipelineClientError as exc:
-        raise _handle_error(exc)
-
-    if analyzer_result:
-        if analyzer_result.summaries and not response.get("filters"):
-            response["filters"] = analyzer_result.summaries
-        if analyzer_result.clarification_needed and analyzer_result.clarification:
-            response["clarificationNeeded"] = True
-            response["clarification"] = asdict(analyzer_result.clarification)
-        if analyzer_result.confidence and not response.get("filterConfidence"):
-            response["filterConfidence"] = analyzer_result.confidence
-        await repository.record_analyzer_result(request.session_id, analyzer_result)
-
-    await repository.append_question(request.session_id, request.query)
-    return ChatResponse.model_validate(response)
+    # 처리할 수 있는 핸들러가 없음
+    LOGGER.error("❌ No handler available for sources: %s", request.sources)
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={"error": f"지원하지 않는 검색 소스입니다: {request.sources}"}
+    )
 
 
 @router.get("/chat/stream")
@@ -133,7 +102,6 @@ async def chat_stream(
     product: Optional[str] = Query(None, alias="product"),
     legacy_common_product: Optional[str] = Query(None, alias="commonProduct"),
     clarification_option: Optional[str] = Query(None, alias="clarificationOption"),
-    pipeline: PipelineClient = Depends(get_pipeline_client),
     repository: SessionRepository = Depends(get_session_repository),
     common_handler: Optional[CommonChatHandler] = Depends(get_common_chat_handler),
 ) -> StreamingResponse:
@@ -150,10 +118,8 @@ async def chat_stream(
 
     session = await repository.get(request.session_id)
     if not session:
-        try:
-            session = await _maybe_await(pipeline.get_session(request.session_id))
-        except PipelineClientError as exc:
-            raise _handle_error(exc)
+        # 세션이 없으면 빈 세션 생성
+        session = {"sessionId": request.session_id, "conversationHistory": [], "questionHistory": []}
         await repository.save(session)
 
     # Use conversationHistory (with roles) if available
@@ -166,7 +132,7 @@ async def chat_stream(
 
     async def event_stream():
         if not common_handler or not common_handler.can_handle(request):
-            yield _format_sse("error", {"message": "현재 공통 문서 질문만 지원합니다."})
+            yield _format_sse("error", {"message": f"지원하지 않는 검색 소스입니다: {request.sources}"})
             return
 
         terminal_event_sent = False
