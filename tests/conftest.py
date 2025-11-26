@@ -11,6 +11,12 @@ from app.services.common_chat_handler import get_common_chat_handler
 from app.services.ticket_chat_handler import get_ticket_chat_handler
 
 
+# Configure anyio to use only asyncio backend
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
 class DummyPipelineClient:
     def __init__(self) -> None:
         self.sessions = {}

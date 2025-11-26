@@ -21,6 +21,7 @@ dependencies = [
 dev = [
     "httpx>=0.27.0",
     "pytest>=8.3.0",
+    "pytest-anyio>=0.0.0",
 ]
 
 [build-system]
@@ -31,3 +32,6 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 include = ["app*"]
 exclude = ["tests*", "docs*", "static*"]
+
+[tool.pytest.ini_options]
+anyio_backends = ["asyncio"]
