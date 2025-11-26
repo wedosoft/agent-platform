@@ -29,12 +29,13 @@ class Settings(BaseSettings):
     supabase_common_summary_enabled: bool = False
     supabase_common_summary_max_chars: int = 500
 
-    # Gemini / RAG
+    # Gemini / RAG (공통 환경변수: GEMINI_STORE_*)
     gemini_api_key: Optional[str] = None
     gemini_primary_model: str = Field(default="gemini-2.5-flash")
     gemini_fallback_model: Optional[str] = Field(default="gemini-2.0-flash")
-    gemini_common_store_name: Optional[str] = None
-    gemini_ticket_store_names: List[str] = Field(default_factory=list)
+    gemini_store_tickets: Optional[str] = None
+    gemini_store_articles: Optional[str] = None
+    gemini_store_common: Optional[str] = None
 
     # Freshdesk
     freshdesk_domain: Optional[str] = None
@@ -45,19 +46,10 @@ class Settings(BaseSettings):
     tenant_config_path: Optional[str] = None
 
     model_config = SettingsConfigDict(
-        env_prefix="AGENT_PLATFORM_",
+        env_prefix="",  # 프리픽스 없음 - GEMINI_*, SUPABASE_COMMON_* 직접 사용
         env_file=(".env", ".env.local"),
         env_file_encoding="utf-8",
     )
-
-    @field_validator("gemini_ticket_store_names", mode="before")
-    @classmethod
-    def split_ticket_stores(cls, value):
-        if isinstance(value, str):
-            return [item.strip() for item in value.split(",") if item.strip()]
-        if value is None:
-            return []
-        return value
 
     @field_validator("supabase_common_languages", mode="before")
     @classmethod

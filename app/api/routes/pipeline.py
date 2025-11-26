@@ -15,8 +15,12 @@ def _handle_pipeline_error(exc: PipelineClientError) -> HTTPException:
 def get_status() -> PipelineStatusResponse:
     settings = get_settings()
     rag_store_names = {}
-    if settings.gemini_common_store_name:
-        rag_store_names["common"] = settings.gemini_common_store_name
+    if settings.gemini_store_common:
+        rag_store_names["common"] = settings.gemini_store_common
+    if settings.gemini_store_tickets:
+        rag_store_names["tickets"] = settings.gemini_store_tickets
+    if settings.gemini_store_articles:
+        rag_store_names["articles"] = settings.gemini_store_articles
 
     available_sources = [value for value in rag_store_names.values() if value]
 

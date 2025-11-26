@@ -102,7 +102,7 @@ def get_ticket_chat_handler() -> Optional[TicketChatHandler]:
     analyzer = get_query_filter_analyzer()
     if not analyzer or not analyzer.llm_client:
         return None
-    store_names = settings.gemini_ticket_store_names
+    store_names = [settings.gemini_store_tickets] if settings.gemini_store_tickets else []
     if not store_names:
         return None
     if not settings.gemini_api_key:

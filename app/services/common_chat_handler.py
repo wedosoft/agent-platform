@@ -205,7 +205,7 @@ class CommonChatHandler:
 def get_common_chat_handler() -> Optional[CommonChatHandler]:
     settings = get_settings()
     api_key = settings.gemini_api_key or os.getenv("GEMINI_API_KEY")
-    store_name = settings.gemini_common_store_name
+    store_name = settings.gemini_store_common
     if not api_key or not store_name:
         return None
     client = GeminiFileSearchClient(

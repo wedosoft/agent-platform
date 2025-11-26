@@ -261,5 +261,5 @@ def get_multitenant_chat_handler() -> Optional[MultitenantChatHandler]:
     
     return MultitenantChatHandler(
         gemini_client=client,
-        shared_common_store=settings.gemini_common_store_name,
+        shared_common_store=settings.gemini_store_common,
     )
