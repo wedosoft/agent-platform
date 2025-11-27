@@ -51,15 +51,14 @@ class SaveProgressRequest(BaseModel):
 # ============================================
 
 MENTOR_SYSTEM_PROMPT = """당신은 글로벌 최상위 테크 기업의 시니어 멘토 '온보딩 나침반'입니다.
-신입사원의 성장을 돕는 것이 당신의 역할입니다.
 
 당신의 특징:
-- 따뜻하고 격려하는 톤
+- 간결하고 본론 중심의 답변 (인사말이나 이름 언급 없이 바로 핵심으로)
 - 실질적이고 실행 가능한 조언
 - 생산성, 시간 관리, 커뮤니케이션, 문제 해결, 협업에 대한 전문 지식
 - 한국어로 답변
 
-신입사원이 겪을 수 있는 어려움에 대해 실용적인 조언을 제공하세요."""
+질문에 대해 바로 본론으로 들어가서 실용적인 조언을 제공하세요. 이름을 부르거나 인사말을 하지 마세요."""
 
 
 def get_feedback_prompt(
@@ -72,21 +71,23 @@ def get_feedback_prompt(
     """시나리오 피드백 생성을 위한 프롬프트."""
     all_choices_text = '\n'.join(f'- {choice}' for choice in all_choices)
     
-    return f"""당신은 글로벌 최상위 테크 기업의 노련한 시니어 매니저입니다. 신입 주니어 사원 {user_name}님에게 멘토링을 제공하는 역할을 수행해 주세요.
+    return f"""당신은 글로벌 최상위 테크 기업의 노련한 시니어 매니저입니다.
 
-신입사원에게 다음과 같은 업무 시나리오가 주어졌습니다:
-**시나리오 제목:** {scenario_title}
-**상세 설명:** {scenario_description}
+업무 시나리오:
+**제목:** {scenario_title}
+**상황:** {scenario_description}
 
-선택 가능한 행동들은 다음과 같았습니다:
+선택 가능한 행동들:
 {all_choices_text}
 
-**신입사원의 선택:** "{selected_choice}"
+**선택한 행동:** "{selected_choice}"
 
-이 선택에 대해 명확하고 실행 가능한 피드백을 제공해 주세요. **피드백은 반드시 아래의 마크다운 서식을 정확히 따라야 합니다.**
+이 선택에 대해 명확하고 실행 가능한 피드백을 제공해 주세요.
+**중요: 이름을 부르거나 인사말 없이 바로 본론으로 들어가세요.**
+**피드백은 반드시 아래의 마크다운 서식을 정확히 따라야 합니다.**
 
-### 🤷 당신의 선택에 대한 분석
-({user_name}님의 선택을 먼저 인정하고, 해당 선택이 실제 업무 환경에서 가질 수 있는 장점과 단점을 균형 있게 분석)
+### 🤷 선택에 대한 분석
+(선택을 인정하고, 실제 업무 환경에서 가질 수 있는 장점과 단점을 균형 있게 분석)
 
 ---
 
@@ -101,7 +102,7 @@ def get_feedback_prompt(
 ---
 
 ### ⭐ 핵심 정리
-> ({user_name}님이 앞으로 유사한 상황에서 기억하고 적용할 수 있는 핵심 원칙이나 교훈을 blockquote 형식으로 작성)
+> (앞으로 유사한 상황에서 기억하고 적용할 수 있는 핵심 원칙이나 교훈을 blockquote 형식으로 작성)
 
 **피드백 작성이 끝나면, 반드시 다음 줄에 %%%QUESTIONS%%% 라는 구분자를 삽입해주세요.**
 
@@ -116,16 +117,16 @@ def get_followup_prompt(
     question: str
 ) -> str:
     """후속 질문 답변 생성을 위한 프롬프트."""
-    return f"""당신은 글로벌 최상위 테크 기업의 시니어 멘토 '온보딩 나침반'입니다.
+    return f"""당신은 글로벌 최상위 테크 기업의 시니어 멘토입니다.
 
 **상황:**
 - **시나리오:** {scenario_title} ({scenario_description})
 - **이전 조언 요약:** {original_feedback[:500]}...
 
-신입사원 {user_name}님이 다음과 같은 추가 질문을 했습니다:
-**질문:** "{question}"
+**추가 질문:** "{question}"
 
 이 질문에 대해 명확하고, 실질적이며, 실행 가능한 답변을 해주세요.
+**중요: 이름을 부르거나 인사말 없이 바로 본론으로 들어가세요.**
 답변은 마크다운 형식으로, 한국어로 해주세요."""
 
 
@@ -166,7 +167,7 @@ async def create_session(request: CreateSessionRequest):
 
     return CreateSessionResponse(
         sessionId=session_id,
-        message=f"안녕하세요, {request.userName}님! 온보딩 세션이 시작되었습니다."
+        message="온보딩 세션이 시작되었습니다."
     )
 
 
@@ -207,7 +208,7 @@ async def chat_stream(
             # 시스템 프롬프트 + 대화 히스토리 구성
             messages = [
                 {"role": "user", "parts": [{"text": MENTOR_SYSTEM_PROMPT}]},
-                {"role": "model", "parts": [{"text": f"네, {user_name}님의 AI 멘토로서 도움을 드리겠습니다."}]},
+                {"role": "model", "parts": [{"text": "네, 무엇이든 물어보세요."}]},
             ]
             
             # 히스토리 추가 (최근 4턴)
