@@ -161,7 +161,15 @@ async def upload_document_to_store(
             async with httpx.AsyncClient(timeout=300) as client:
                 # 업로드 시작
                 start_response = await client.post(start_url, headers=start_headers, json=start_body)
-                start_response.raise_for_status()
+                
+                # 에러 시 상세 내용 로깅
+                if start_response.status_code >= 400:
+                    error_detail = start_response.text
+                    print(f"[ERROR] Upload start failed: {start_response.status_code}")
+                    print(f"[ERROR] URL: {start_url}")
+                    print(f"[ERROR] Request body: {start_body}")
+                    print(f"[ERROR] Response: {error_detail}")
+                    start_response.raise_for_status()
                 
                 # 헤더에서 업로드 URL 확인
                 upload_url = start_response.headers.get("X-Goog-Upload-URL")

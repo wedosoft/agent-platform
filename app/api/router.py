@@ -11,6 +11,7 @@ from app.api.routes import (
     multitenant,
     pipeline,
     sessions,
+    sync,
 )
 from app.core.config import get_settings
 
@@ -28,4 +29,5 @@ def get_api_router() -> APIRouter:
     router.include_router(multitenant.router)  # Multitenant routes at /api/*
     router.include_router(assist.router)  # FDK Custom App assist API
     router.include_router(admin.router)  # Admin API for tenant management
+    router.include_router(sync.router, prefix="/sync")  # Sync API for data synchronization
     return router
