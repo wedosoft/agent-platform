@@ -2,13 +2,24 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Iterable, List, Optional
+from typing import Any, AsyncGenerator, Iterable, List, Optional
 
 from google import genai
 
+from app.core.config import get_settings
 from app.models.metadata import MetadataFilter
 
 LOGGER = logging.getLogger(__name__)
+
+
+def get_gemini_client() -> "GeminiClient":
+    """싱글톤 GeminiClient 인스턴스 반환."""
+    settings = get_settings()
+    return GeminiClient(
+        api_key=settings.gemini_api_key,
+        primary_model=settings.gemini_primary_model,
+        fallback_model=settings.gemini_fallback_model,
+    )
 
 
 def _build_metadata_expression(filters: Optional[Iterable[MetadataFilter]]) -> Optional[str]:
@@ -141,3 +152,48 @@ class GeminiClient:
                 LOGGER.warning("Gemini model %s failed: %s", model_name, exc)
                 last_error = exc
         raise GeminiClientError("Gemini 검색 실패") from last_error
+
+    async def generate_content_stream(
+        self,
+        *,
+        contents: Any,
+        config: Optional[dict] = None,
+    ) -> AsyncGenerator[Any, None]:
+        """스트리밍 콘텐츠 생성."""
+        model_name = self.models[0]
+        
+        try:
+            # google-genai의 동기 스트리밍을 비동기로 래핑
+            response = self.client.models.generate_content_stream(
+                model=model_name,
+                contents=contents,
+                config=config,
+            )
+            
+            for chunk in response:
+                yield chunk
+                
+        except Exception as exc:
+            LOGGER.error("Gemini streaming failed: %s", exc)
+            raise GeminiClientError("Gemini 스트리밍 실패") from exc
+
+    def generate_content(
+        self,
+        *,
+        contents: Any,
+        config: Optional[dict] = None,
+    ) -> Any:
+        """동기 콘텐츠 생성."""
+        model_name = self.models[0]
+        
+        try:
+            response = self.client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=config,
+            )
+            return response
+                
+        except Exception as exc:
+            LOGGER.error("Gemini generation failed: %s", exc)
+            raise GeminiClientError("Gemini 생성 실패") from exc

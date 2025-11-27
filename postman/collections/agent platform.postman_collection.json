@@ -1,0 +1,133 @@
+{
+  "info": {
+    "_postman_id": "db25e4fc-c2a2-426c-ade5-410c5ce8b959",
+    "name": "agent platform",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "data ingestion",
+      "id": "e0d2c155-0c6c-4e1c-9f9a-c43c05ee1ef1",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"includeTickets\": true,\n    \"includeArticles\": false,\n    \"incremental\": false,\n    \"ticketSince\": \"2025-09-01T00:00:00Z\"\n  }",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:4000/pipeline/sync",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "4000",
+          "path": [
+            "pipeline",
+            "sync"
+          ]
+        },
+        "description": "Generated from cURL: curl -X POST http://localhost:4000/pipeline/sync \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n    \"includeTickets\": true,\n    \"includeArticles\": false,\n    \"incremental\": false\n  }'"
+      }
+    },
+    {
+      "name": "fastapi data ingestion",
+      "id": "221896a4-2f7c-4e71-b99f-fca6f7fe7f4a",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "X-Tenant-ID",
+            "value": "wedosoft"
+          },
+          {
+            "key": "X-Platform",
+            "value": "freshdesk"
+          },
+          {
+            "key": "X-Domain",
+            "value": "wedosoft.freshdesk.com"
+          },
+          {
+            "key": "X-API-Key",
+            "value": "Ug9H1cKCZZtZ4haamBy"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"include_tickets\": true,\n    \"include_articles\": false,\n    \"ticket_since\": \"2025-09-01T00:00:00Z\"\n  }",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:8000/api/sync/trigger",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8000",
+          "path": [
+            "api",
+            "sync",
+            "trigger"
+          ]
+        },
+        "description": "Generated from cURL: \ncurl -X POST \"http://localhost:8000/api/sync/trigger\" \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-Tenant-ID: wedosoft\" \\\n  -H \"X-Platform: freshdesk\" \\\n  -H \"X-Domain: wedosoft.freshdesk.com\" \\\n  -H \"X-API-Key: YOUR_FRESHDESK_API_KEY\" \\\n  -d '{\n    \"include_tickets\": true,\n    \"include_articles\": true,\n    \"incremental\": false,\n    \"max_concurrency\": 5,\n    \"batch_size\": 10\n  }'"
+      }
+    },
+    {
+      "name": "http://localhost:8000/api/sync/status/{job_id}",
+      "id": "78df9034-8b81-4d02-94c8-efbb7a4d9e19",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-Tenant-ID",
+            "value": "wedosoft"
+          },
+          {
+            "key": "X-Platform",
+            "value": "freshdesk"
+          },
+          {
+            "key": "X-API-Key",
+            "value": "Ug9H1cKCZZtZ4haamBy",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "http://localhost:8000/api/sync/status/sync_wedosoft_1764218592",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8000",
+          "path": [
+            "api",
+            "sync",
+            "status",
+            "sync_wedosoft_1764218592"
+          ]
+        },
+        "description": "Generated from cURL: \ncurl \"http://localhost:8000/api/sync/status/{job_id}\" \\\n  -H \"X-Tenant-ID: wedosoft\" \\\n  -H \"X-Platform: freshdesk\""
+      }
+    }
+  ]
+}

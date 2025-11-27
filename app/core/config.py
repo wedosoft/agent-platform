@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     gemini_store_tickets: Optional[str] = None
     gemini_store_articles: Optional[str] = None
     gemini_store_common: Optional[str] = None
+    gemini_store_onboarding: Optional[str] = None  # 온보딩 인수인계 문서
 
     # Freshdesk
     freshdesk_domain: Optional[str] = None

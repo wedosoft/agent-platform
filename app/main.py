@@ -33,7 +33,9 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 allowed_origins = [
     "http://localhost:3000",
+    "http://localhost:3001",  # Onboarding frontend
     "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
     "https://localhost:3000",
     "https://ameer-timberless-paragogically.ngrok-free.dev",
     "https://www.wedosoft.net",
