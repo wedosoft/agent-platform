@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     # Admin API
     admin_api_key: Optional[str] = None
 
+    # Supabase Auth (Google OAuth)
+    supabase_jwt_secret: Optional[str] = None  # Supabase JWT Secret for token verification
+
     # Supabase (공통 문서)
     supabase_common_url: Optional[str] = None
     supabase_common_service_role_key: Optional[str] = None

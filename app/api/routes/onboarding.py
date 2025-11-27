@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from app.services.gemini_client import get_gemini_client
 from app.services.gemini_file_search import upload_document_to_store, get_store_documents
+from app.services.onboarding_repository import get_onboarding_repository
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -138,11 +139,11 @@ def format_sse(event: str, data: dict) -> str:
 
 
 # ============================================
-# 세션 관리 (간단한 인메모리 저장)
+# 세션 관리 (Supabase 영속화, 폴백: 인메모리)
 # ============================================
 
-# 실제 프로덕션에서는 Redis/Supabase 사용
-_sessions: dict = {}
+# 대화 히스토리용 인메모리 캐시 (세션 메타데이터는 Supabase에 저장)
+_conversation_cache: dict = {}
 
 
 @router.post("/session", response_model=CreateSessionResponse)
@@ -150,15 +151,19 @@ async def create_session(request: CreateSessionRequest):
     """온보딩 세션 생성."""
     import uuid
     session_id = f"onboarding-{uuid.uuid4().hex[:8]}"
-    
-    _sessions[session_id] = {
+
+    # Supabase에 세션 저장 (또는 인메모리 폴백)
+    repo = get_onboarding_repository()
+    await repo.create_session(session_id, request.userName)
+
+    # 대화 히스토리 캐시 초기화
+    _conversation_cache[session_id] = {
         "userName": request.userName,
         "conversationHistory": [],
-        "progress": [],
     }
-    
+
     logger.info(f"Created onboarding session: {session_id} for user: {request.userName}")
-    
+
     return CreateSessionResponse(
         sessionId=session_id,
         message=f"안녕하세요, {request.userName}님! 온보딩 세션이 시작되었습니다."
@@ -175,13 +180,16 @@ async def chat_stream(
     query: str = Query(...),
 ):
     """AI 멘토 채팅 스트리밍 (RAG 검색 포함)."""
-    
-    session = _sessions.get(sessionId)
+
+    # 대화 히스토리 캐시에서 조회, 없으면 Supabase에서 세션 정보 조회
+    session = _conversation_cache.get(sessionId)
     if not session:
-        # 세션이 없으면 임시 생성
-        session = {"userName": "신입사원", "conversationHistory": []}
-        _sessions[sessionId] = session
-    
+        repo = get_onboarding_repository()
+        db_session = await repo.get_session(sessionId)
+        user_name = db_session.user_name if db_session else "신입사원"
+        session = {"userName": user_name, "conversationHistory": []}
+        _conversation_cache[sessionId] = session
+
     user_name = session.get("userName", "신입사원")
     history = session.get("conversationHistory", [])
     
@@ -385,48 +393,66 @@ async def followup_stream(
 
 
 # ============================================
-# 진행도 관리
+# 진행도 관리 (Supabase 영속화)
 # ============================================
 
 @router.post("/progress")
 async def save_progress(request: SaveProgressRequest):
-    """시나리오 완료 진행도 저장."""
-    from datetime import datetime
-    
-    session = _sessions.get(request.sessionId)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    
-    progress = session.get("progress", [])
-    progress.append({
-        "scenarioId": request.scenarioId,
-        "choiceId": request.choiceId,
-        "feedbackRating": request.feedbackRating,
-        "completedAt": datetime.utcnow().isoformat(),
-    })
-    session["progress"] = progress
-    
-    logger.info(f"Saved progress for session {request.sessionId}: scenario {request.scenarioId}")
-    
-    return {"success": True}
+    """시나리오 완료 진행도 저장 (Supabase에 영속화)."""
+    repo = get_onboarding_repository()
+
+    try:
+        await repo.save_progress(
+            session_id=request.sessionId,
+            scenario_id=request.scenarioId,
+            choice_id=request.choiceId,
+            feedback_rating=request.feedbackRating,
+        )
+        logger.info(f"Saved progress for session {request.sessionId}: scenario {request.scenarioId}")
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"Failed to save progress: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/progress/{sessionId}")
 async def get_progress(sessionId: str):
-    """진행도 조회."""
-    session = _sessions.get(sessionId)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    
-    progress = session.get("progress", [])
-    
-    return {
-        "userId": sessionId,
-        "userName": session.get("userName", ""),
-        "completedScenarios": progress,
-        "totalScenarios": 12,  # 하드코딩된 시나리오 수
-        "completionRate": len(progress) / 12 * 100,
-    }
+    """진행도 조회 (Supabase에서 조회)."""
+    repo = get_onboarding_repository()
+
+    try:
+        summary = await repo.get_progress_summary(sessionId, total_scenarios=12)
+        return {
+            "userId": summary.user_id,
+            "userName": summary.user_name,
+            "completedScenarios": [
+                {
+                    "scenarioId": p.scenario_id,
+                    "choiceId": p.choice_id,
+                    "feedbackRating": p.feedback_rating,
+                    "completedAt": p.completed_at.isoformat() if p.completed_at else None,
+                }
+                for p in summary.completed_scenarios
+            ],
+            "totalScenarios": summary.total_scenarios,
+            "completionRate": summary.completion_rate,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get progress: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/progress")
+async def get_all_progress():
+    """모든 세션의 진행도 요약 조회 (관리자용)."""
+    repo = get_onboarding_repository()
+
+    try:
+        summaries = await repo.get_all_sessions_summary()
+        return {"sessions": summaries}
+    except Exception as e:
+        logger.error(f"Failed to get all progress: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================
