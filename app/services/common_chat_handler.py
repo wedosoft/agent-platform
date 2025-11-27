@@ -50,8 +50,16 @@ class CommonChatHandler:
             # sources 지정 안되면 기본적으로 처리
             return True
         
-        # 요청된 sources 중 하나라도 store_names에 있으면 처리 가능
-        return any(source in self.store_names for source in sources)
+        # 역방향 매핑: store path -> source key
+        store_to_source = {v: k for k, v in self.store_names.items()}
+        
+        # 요청된 sources 중 하나라도 store_names에 있거나, store path로 매칭되면 처리 가능
+        for source in sources:
+            if source in self.store_names:
+                return True
+            if source in store_to_source:
+                return True
+        return False
 
     def _get_store_names_for_request(self, request: ChatRequest) -> List[str]:
         """요청에 맞는 store names 반환"""
@@ -61,8 +69,19 @@ class CommonChatHandler:
             # sources 지정 안되면 모든 사용 가능한 store 사용
             return list(self.store_names.values())
         
-        # 요청된 sources에 해당하는 store names만 반환
-        return [self.store_names[s] for s in sources if s in self.store_names]
+        # 역방향 매핑: store path -> source key
+        store_to_source = {v: k for k, v in self.store_names.items()}
+        
+        result = []
+        for s in sources:
+            if s in self.store_names:
+                # source key (e.g., "common") -> store path
+                result.append(self.store_names[s])
+            elif s in store_to_source:
+                # store path 직접 사용
+                result.append(s)
+        
+        return result if result else list(self.store_names.values())
 
     def _enrich_chunks_with_metadata(self, chunks: List[dict]) -> List[dict]:
         LOGGER.info("🔍 Enrichment called with %d chunks, has service: %s", len(chunks) if chunks else 0, bool(self.documents_service))
