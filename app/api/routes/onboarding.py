@@ -529,12 +529,636 @@ async def list_onboarding_documents(
 async def delete_onboarding_document(document_name: str):
     """온보딩 문서 삭제."""
     from app.services.gemini_file_search import delete_document
-    
+
     try:
         await delete_document(document_name)
         logger.info(f"Deleted document: {document_name}")
         return {"success": True, "deleted": document_name}
-        
+
     except Exception as e:
         logger.error(f"Document delete failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# 지식 베이스 (Knowledge Base)
+# ============================================
+
+class StructureKnowledgeRequest(BaseModel):
+    """지식 구조화 요청."""
+    rawContent: str
+    category: str
+
+
+class CreateKnowledgeArticleRequest(BaseModel):
+    """지식 아티클 생성 요청."""
+    title: str
+    author: str
+    category: str
+    rawContent: str
+    structuredSummary: str
+
+
+class KnowledgeArticleResponse(BaseModel):
+    """지식 아티클 응답."""
+    id: str
+    title: str
+    author: str
+    category: str
+    rawContent: str
+    structuredSummary: Optional[str] = None
+    createdAt: str
+
+
+# 인메모리 저장소 (실제 프로덕션에서는 Supabase 사용)
+_knowledge_store: list = []
+
+
+def get_structure_prompt(category: str) -> str:
+    """범주별 구조화 프롬프트 생성."""
+    category_prompts = {
+        "handover": """
+다음 인수인계 내용을 구조화하세요:
+1. **핵심 진행 사항**: 현재 진행 중인 프로젝트/업무
+2. **주요 연락처**: 연락해야 할 사람과 이유
+3. **파일/접근 정보**: 파일 위치, 계정 정보 등
+4. **주의사항/정책**: 반드시 지켜야 할 사항
+5. **액션 아이템**: 즉시 해야 할 일
+""",
+        "process": """
+다음 업무 프로세스를 구조화하세요:
+1. **개요**: 업무 목적과 배경
+2. **단계별 절차**: 순서대로 정리
+3. **주의사항**: 실수하기 쉬운 부분
+4. **관련 시스템/도구**: 사용하는 도구
+5. **담당자/문의처**: 도움 받을 수 있는 곳
+""",
+        "tips": """
+다음 팁/노하우를 구조화하세요:
+1. **핵심 포인트**: 가장 중요한 내용
+2. **적용 방법**: 실제 적용하는 방법
+3. **주의점**: 잘못 적용하면 안되는 경우
+4. **관련 팁**: 함께 알면 좋은 내용
+""",
+        "company": """
+다음 회사 생활 정보를 구조화하세요:
+1. **요약**: 핵심 내용
+2. **상세 정보**: 알아야 할 세부사항
+3. **유용한 팁**: 활용하면 좋은 점
+4. **관련 정보**: 함께 알면 좋은 내용
+""",
+        "tools": """
+다음 시스템/도구 정보를 구조화하세요:
+1. **개요**: 도구의 용도
+2. **접근 방법**: 어떻게 접근하는지
+3. **주요 기능**: 자주 사용하는 기능
+4. **팁**: 효율적으로 사용하는 방법
+5. **문제 해결**: 자주 발생하는 문제와 해결법
+""",
+    }
+    return category_prompts.get(category, """
+다음 내용을 구조화하세요:
+1. **핵심 내용**: 가장 중요한 포인트
+2. **상세 정보**: 세부 사항
+3. **관련 정보**: 참고할 내용
+""")
+
+
+@router.post("/knowledge/structure")
+async def structure_knowledge_content(request: StructureKnowledgeRequest):
+    """AI를 사용하여 지식 콘텐츠 구조화."""
+    try:
+        client = get_gemini_client()
+
+        structure_guide = get_structure_prompt(request.category)
+        prompt = f"""당신은 사내 지식을 정리하는 전문가입니다.
+
+{structure_guide}
+
+원본 내용:
+"{request.rawContent}"
+
+위 내용을 마크다운 형식으로 구조화하세요. 한국어로 작성하세요."""
+
+        response = await client.generate_content(
+            contents=prompt,
+            config={"thinking_config": {"thinking_budget": 0}}
+        )
+
+        return {"structuredSummary": response.text}
+
+    except Exception as e:
+        logger.error(f"Knowledge structure failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/knowledge", response_model=List[KnowledgeArticleResponse])
+async def get_knowledge_articles(category: Optional[str] = None):
+    """지식 아티클 목록 조회."""
+    articles = _knowledge_store
+
+    if category:
+        articles = [a for a in articles if a.get("category") == category]
+
+    # 최신순 정렬
+    articles = sorted(articles, key=lambda x: x.get("createdAt", ""), reverse=True)
+
+    return articles
+
+
+@router.post("/knowledge", response_model=KnowledgeArticleResponse)
+async def create_knowledge_article(request: CreateKnowledgeArticleRequest):
+    """지식 아티클 생성."""
+    import uuid
+    from datetime import datetime
+
+    article = {
+        "id": str(uuid.uuid4()),
+        "title": request.title,
+        "author": request.author,
+        "category": request.category,
+        "rawContent": request.rawContent,
+        "structuredSummary": request.structuredSummary,
+        "createdAt": datetime.now().strftime("%Y-%m-%d"),
+    }
+
+    _knowledge_store.append(article)
+    logger.info(f"Created knowledge article: {article['title']}")
+
+    return article
+
+
+@router.delete("/knowledge/{article_id}")
+async def delete_knowledge_article(article_id: str):
+    """지식 아티클 삭제."""
+    global _knowledge_store
+
+    original_count = len(_knowledge_store)
+    _knowledge_store = [a for a in _knowledge_store if a.get("id") != article_id]
+
+    if len(_knowledge_store) == original_count:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    logger.info(f"Deleted knowledge article: {article_id}")
+    return {"success": True}
+
+
+# ============================================
+# 학습 평가 (Assessment)
+# ============================================
+
+class AssessmentSubmitRequest(BaseModel):
+    """퀴즈 답안 제출 요청."""
+    sessionId: str
+    trackId: str
+    levelId: Optional[str] = None
+    answers: List[dict]  # [{"questionId": str, "choiceId": str}]
+
+
+# 트랙 정의 (정적 데이터)
+ASSESSMENT_TRACKS = [
+    {
+        "id": "work_sense",
+        "name": "업무 센스 체크",
+        "description": "고객 응대, 업무 우선순위, 팀 협업 등 기본적인 업무 역량을 평가합니다.",
+        "icon": "fas fa-lightbulb",
+        "type": "work_sense",
+    },
+    {
+        "id": "product_knowledge",
+        "name": "제품 지식",
+        "description": "시장 포지셔닝부터 세부 기능까지, 제품에 대한 체계적인 학습과 평가를 진행합니다.",
+        "icon": "fas fa-graduation-cap",
+        "type": "product_knowledge",
+        "totalLevels": 4,
+    },
+]
+
+# 레벨 정의 (제품 지식용)
+ASSESSMENT_LEVELS = [
+    {
+        "id": "level_1",
+        "trackId": "product_knowledge",
+        "order": 1,
+        "name": "시장과 포지셔닝",
+        "description": "우리 제품이 속한 시장과 경쟁 환경을 이해합니다.",
+        "passingScore": 80,
+    },
+    {
+        "id": "level_2",
+        "trackId": "product_knowledge",
+        "order": 2,
+        "name": "설계 철학과 목적",
+        "description": "제품이 해결하는 핵심 문제와 설계 원칙을 학습합니다.",
+        "passingScore": 80,
+    },
+    {
+        "id": "level_3",
+        "trackId": "product_knowledge",
+        "order": 3,
+        "name": "핵심 기능군 이해",
+        "description": "주요 기능군의 필요성과 작동 방식을 파악합니다.",
+        "passingScore": 80,
+    },
+    {
+        "id": "level_4",
+        "trackId": "product_knowledge",
+        "order": 4,
+        "name": "세부 기능 심화",
+        "description": "각 기능의 상세 옵션과 고급 사용법을 학습합니다.",
+        "passingScore": 80,
+    },
+]
+
+# 샘플 문제 (업무 센스 체크)
+WORK_SENSE_QUESTIONS = [
+    {
+        "id": "ws_q1",
+        "trackId": "work_sense",
+        "type": "scenario",
+        "context": "고객이 급하게 기능 수정을 요청했습니다. 하지만 현재 다른 중요한 프로젝트 마감이 코앞입니다.",
+        "question": "이 상황에서 가장 적절한 대응은?",
+        "choices": [
+            {"id": "a", "text": "고객 요청을 우선 처리하고 프로젝트 마감을 미룬다"},
+            {"id": "b", "text": "프로젝트 마감을 우선하고 고객에게 기다려달라고 한다"},
+            {"id": "c", "text": "상사에게 상황을 보고하고 우선순위 조정을 요청한다"},
+            {"id": "d", "text": "두 가지 모두 야근해서 처리한다"},
+        ],
+        "correctChoiceId": "c",
+        "explanation": "우선순위 충돌 상황에서는 독단적으로 결정하기보다 상사에게 상황을 공유하고 조직 차원의 우선순위 판단을 받는 것이 바람직합니다.",
+    },
+    {
+        "id": "ws_q2",
+        "trackId": "work_sense",
+        "type": "scenario",
+        "context": "팀 회의 중 동료가 제시한 아이디어에 명백한 문제점이 보입니다.",
+        "question": "가장 적절한 대응 방법은?",
+        "choices": [
+            {"id": "a", "text": "회의 중 즉시 문제점을 지적한다"},
+            {"id": "b", "text": "회의 후 개인적으로 동료에게 이야기한다"},
+            {"id": "c", "text": "문제점과 함께 개선 방안을 건설적으로 제안한다"},
+            {"id": "d", "text": "다른 사람이 지적할 때까지 기다린다"},
+        ],
+        "correctChoiceId": "c",
+        "explanation": "문제점만 지적하기보다 개선 방안과 함께 건설적으로 의견을 나누는 것이 팀 협업에 도움이 됩니다.",
+    },
+    {
+        "id": "ws_q3",
+        "trackId": "work_sense",
+        "type": "scenario",
+        "context": "처음 접하는 업무를 배정받았는데, 담당자가 휴가 중입니다.",
+        "question": "어떻게 대응하시겠습니까?",
+        "choices": [
+            {"id": "a", "text": "담당자가 돌아올 때까지 기다린다"},
+            {"id": "b", "text": "관련 문서를 찾아보고 시도해본 후, 막히는 부분을 정리한다"},
+            {"id": "c", "text": "다른 팀원에게 전체 업무를 대신 해달라고 요청한다"},
+            {"id": "d", "text": "상사에게 업무를 못하겠다고 보고한다"},
+        ],
+        "correctChoiceId": "b",
+        "explanation": "먼저 스스로 조사하고 시도해본 후 구체적인 질문을 정리하면 효율적으로 도움을 받을 수 있습니다.",
+    },
+]
+
+# 진행도 저장 (인메모리)
+_assessment_progress: dict = {}
+
+# 학습 콘텐츠 프롬프트 (레벨별)
+LEARNING_CONTENT_PROMPTS = {
+    "level_1": """다음 주제에 대해 학습 콘텐츠를 생성해주세요:
+
+## 시장과 포지셔닝
+
+1. **시장 이해**: 우리 제품이 속한 시장의 현황과 트렌드
+2. **경쟁 환경**: 주요 경쟁사와 우리 제품의 차별점
+3. **타겟 고객**: 우리 제품의 주요 고객군과 그들의 니즈
+4. **가치 제안**: 우리 제품이 제공하는 핵심 가치
+
+제품 문서를 참고하여 구체적이고 실용적인 내용으로 작성해주세요.
+마크다운 형식으로, 한국어로 답변해주세요.""",
+
+    "level_2": """다음 주제에 대해 학습 콘텐츠를 생성해주세요:
+
+## 설계 철학과 목적
+
+1. **핵심 문제**: 우리 제품이 해결하고자 하는 핵심 문제
+2. **설계 원칙**: 제품을 설계할 때 적용된 주요 원칙들
+3. **아키텍처 개요**: 사용자 관점에서 제품의 구조
+4. **주요 시나리오**: 제품의 대표적인 사용 사례
+
+제품 문서를 참고하여 '왜' 이렇게 설계되었는지 중심으로 작성해주세요.
+마크다운 형식으로, 한국어로 답변해주세요.""",
+
+    "level_3": """다음 주제에 대해 학습 콘텐츠를 생성해주세요:
+
+## 핵심 기능군 이해
+
+각 주요 기능군에 대해:
+1. **왜 필요한가?**: 이 기능이 존재하는 이유
+2. **무엇인가?**: 기능의 개요와 핵심 개념
+3. **어떻게 작동하나?**: 기본적인 사용 방법
+4. **다른 기능과의 연결**: 기능 간 관계
+
+제품 문서를 참고하여 실제 업무에서 활용할 수 있는 관점으로 작성해주세요.
+마크다운 형식으로, 한국어로 답변해주세요.""",
+
+    "level_4": """다음 주제에 대해 학습 콘텐츠를 생성해주세요:
+
+## 세부 기능 심화
+
+1. **상세 옵션**: 각 기능의 세부 설정과 옵션들
+2. **고급 사용법**: 파워 유저를 위한 활용 팁
+3. **트러블슈팅**: 자주 발생하는 문제와 해결 방법
+4. **실전 활용 팁**: 효율적으로 사용하는 노하우
+
+제품 문서를 참고하여 실무에서 바로 적용할 수 있는 내용으로 작성해주세요.
+마크다운 형식으로, 한국어로 답변해주세요.""",
+}
+
+
+@router.get("/assessment/tracks")
+async def get_assessment_tracks():
+    """학습 평가 트랙 목록 조회."""
+    return ASSESSMENT_TRACKS
+
+
+@router.get("/assessment/tracks/{track_id}/levels")
+async def get_assessment_levels(
+    track_id: str,
+    sessionId: str = Query(...),
+):
+    """트랙의 레벨 목록 조회 (진행도 포함)."""
+    levels = [l for l in ASSESSMENT_LEVELS if l["trackId"] == track_id]
+
+    # 진행도 조회
+    session_progress = _assessment_progress.get(sessionId, {})
+    track_progress = session_progress.get(track_id, {})
+
+    result = []
+    for level in levels:
+        level_progress = track_progress.get(level["id"], {})
+        is_completed = level_progress.get("isPassed", False)
+        score = level_progress.get("score", 0)
+
+        # 첫 번째 레벨은 항상 언락, 이후는 이전 레벨 완료 시 언락
+        is_unlocked = level["order"] == 1
+        if level["order"] > 1:
+            prev_level_id = f"level_{level['order'] - 1}"
+            prev_progress = track_progress.get(prev_level_id, {})
+            is_unlocked = prev_progress.get("isPassed", False)
+
+        result.append({
+            **level,
+            "isUnlocked": is_unlocked,
+            "isCompleted": is_completed,
+            "score": score,
+        })
+
+    return result
+
+
+@router.get("/assessment/learn/{track_id}/{level_id}/stream")
+async def stream_learning_content(
+    track_id: str,
+    level_id: str,
+):
+    """학습 콘텐츠 스트리밍 (RAG 기반)."""
+
+    prompt = LEARNING_CONTENT_PROMPTS.get(level_id)
+    if not prompt:
+        raise HTTPException(status_code=404, detail="Level not found")
+
+    async def event_generator():
+        try:
+            client = get_gemini_client()
+
+            # RAG 스토어 설정
+            from google.genai import types
+
+            rag_stores = []
+            if STORE_PRODUCT:
+                rag_stores.append(STORE_PRODUCT)
+
+            tools = None
+            if rag_stores:
+                tools = [
+                    types.Tool(
+                        file_search=types.FileSearch(
+                            file_search_store_names=rag_stores
+                        )
+                    )
+                ]
+
+            generation_config = types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                tools=tools,
+            )
+
+            full_response = ""
+            model_name = client.models[0]
+
+            response = client.client.models.generate_content_stream(
+                model=model_name,
+                contents=prompt,
+                config=generation_config,
+            )
+
+            for chunk in response:
+                if chunk.text:
+                    full_response += chunk.text
+                    yield format_sse("chunk", {"text": chunk.text})
+
+            yield format_sse("result", {"text": full_response})
+
+        except Exception as e:
+            logger.error(f"Learning content stream error: {e}")
+            yield format_sse("error", {"message": str(e)})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream"
+    )
+
+
+@router.get("/assessment/mentor/chat/stream")
+async def stream_mentor_chat(
+    sessionId: str = Query(...),
+    trackId: str = Query(...),
+    levelId: str = Query(...),
+    message: str = Query(...),
+):
+    """AI 멘토 채팅 스트리밍 (레벨 컨텍스트 포함)."""
+
+    # 레벨 정보 조회
+    level_info = next((l for l in ASSESSMENT_LEVELS if l["id"] == levelId), None)
+    level_name = level_info["name"] if level_info else "학습"
+    level_desc = level_info["description"] if level_info else ""
+
+    system_prompt = f"""당신은 온보딩 학습 멘토입니다.
+현재 학습자는 '{level_name}' 레벨을 학습 중입니다.
+레벨 설명: {level_desc}
+
+제품 문서를 참고하여 학습자의 질문에 친절하고 구체적으로 답변해주세요.
+답변은 한국어로, 마크다운 형식으로 작성해주세요.
+인사말이나 이름 언급 없이 바로 본론으로 들어가세요."""
+
+    async def event_generator():
+        try:
+            client = get_gemini_client()
+
+            # RAG 스토어 설정
+            from google.genai import types
+
+            rag_stores = []
+            if STORE_PRODUCT:
+                rag_stores.append(STORE_PRODUCT)
+
+            tools = None
+            if rag_stores:
+                tools = [
+                    types.Tool(
+                        file_search=types.FileSearch(
+                            file_search_store_names=rag_stores
+                        )
+                    )
+                ]
+
+            messages = [
+                {"role": "user", "parts": [{"text": system_prompt}]},
+                {"role": "model", "parts": [{"text": "네, 질문해주세요."}]},
+                {"role": "user", "parts": [{"text": message}]},
+            ]
+
+            generation_config = types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                tools=tools,
+            )
+
+            full_response = ""
+            model_name = client.models[0]
+
+            response = client.client.models.generate_content_stream(
+                model=model_name,
+                contents=messages,
+                config=generation_config,
+            )
+
+            for chunk in response:
+                if chunk.text:
+                    full_response += chunk.text
+                    yield format_sse("chunk", {"text": chunk.text})
+
+            yield format_sse("result", {"text": full_response})
+
+        except Exception as e:
+            logger.error(f"Mentor chat stream error: {e}")
+            yield format_sse("error", {"message": str(e)})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream"
+    )
+
+
+@router.get("/assessment/questions/{track_id}")
+async def get_assessment_questions(
+    track_id: str,
+    levelId: Optional[str] = None,
+):
+    """퀴즈 문제 조회."""
+    if track_id == "work_sense":
+        questions = WORK_SENSE_QUESTIONS
+    else:
+        # 제품 지식 문제는 AI로 동적 생성 (추후 구현)
+        # 현재는 샘플 반환
+        questions = []
+
+    # 정답 정보 제외하고 반환
+    return [
+        {
+            "id": q["id"],
+            "trackId": q["trackId"],
+            "type": q["type"],
+            "context": q.get("context"),
+            "question": q["question"],
+            "choices": q["choices"],
+        }
+        for q in questions
+    ]
+
+
+@router.post("/assessment/submit")
+async def submit_assessment(request: AssessmentSubmitRequest):
+    """퀴즈 답안 제출 및 채점."""
+
+    # 문제 조회
+    if request.trackId == "work_sense":
+        questions = {q["id"]: q for q in WORK_SENSE_QUESTIONS}
+    else:
+        questions = {}
+
+    # 채점
+    correct_count = 0
+    results = []
+
+    for answer in request.answers:
+        question = questions.get(answer["questionId"])
+        if question:
+            is_correct = answer["choiceId"] == question["correctChoiceId"]
+            if is_correct:
+                correct_count += 1
+
+            results.append({
+                "questionId": answer["questionId"],
+                "choiceId": answer["choiceId"],
+                "isCorrect": is_correct,
+                "correctChoiceId": question["correctChoiceId"],
+                "explanation": question["explanation"],
+            })
+
+    total = len(request.answers)
+    score = int((correct_count / total) * 100) if total > 0 else 0
+    is_passed = score >= 80
+
+    # 진행도 저장
+    if request.sessionId not in _assessment_progress:
+        _assessment_progress[request.sessionId] = {}
+    if request.trackId not in _assessment_progress[request.sessionId]:
+        _assessment_progress[request.sessionId][request.trackId] = {}
+
+    level_key = request.levelId or "default"
+    _assessment_progress[request.sessionId][request.trackId][level_key] = {
+        "score": score,
+        "isPassed": is_passed,
+        "completedAt": __import__("datetime").datetime.now().isoformat(),
+    }
+
+    logger.info(f"Assessment submitted: session={request.sessionId}, track={request.trackId}, score={score}")
+
+    return {
+        "trackId": request.trackId,
+        "levelId": request.levelId,
+        "score": score,
+        "totalQuestions": total,
+        "correctCount": correct_count,
+        "isPassed": is_passed,
+        "answers": results,
+    }
+
+
+@router.get("/assessment/progress/{session_id}")
+async def get_assessment_progress(session_id: str):
+    """진행도 조회."""
+    progress = _assessment_progress.get(session_id, {})
+
+    tracks = []
+    for track_id, levels in progress.items():
+        for level_id, data in levels.items():
+            tracks.append({
+                "trackId": track_id,
+                "levelId": level_id if level_id != "default" else None,
+                "score": data.get("score", 0),
+                "isPassed": data.get("isPassed", False),
+                "completedAt": data.get("completedAt"),
+            })
+
+    return {"tracks": tracks}
