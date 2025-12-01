@@ -143,14 +143,19 @@ class CommonChatHandler:
                         retrieved["uri"] = doc_url
                         LOGGER.info("🔗 Injected URI for '%s': %s", title, doc_url)
                     else:
-                        LOGGER.warning("Missing URL components for '%s': product=%s, csv_id=%s, short_slug=%s", 
+                        LOGGER.warning("Missing URL components for '%s': product=%s, csv_id=%s, short_slug=%s",
                                      title, product, csv_id, short_slug)
-                    
-                    # Update title to Korean title if available
+
+                    # Add title_ko and title_en for multilingual support
                     title_ko = doc.get("title_ko")
+                    title_en = doc.get("title_en")
                     if title_ko:
-                        retrieved["title"] = title_ko
-                        LOGGER.info("📝 Updated title for '%s': %s", title, title_ko)
+                        retrieved["title_ko"] = title_ko
+                        retrieved["title"] = title_ko  # 기존 호환성 유지
+                        LOGGER.info("📝 Added title_ko for '%s': %s", title, title_ko)
+                    if title_en:
+                        retrieved["title_en"] = title_en
+                        LOGGER.info("📝 Added title_en for '%s': %s", title, title_en)
         except Exception as e:
             LOGGER.warning("Failed to enrich chunks with metadata: %s", e)
 
