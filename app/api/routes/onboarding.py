@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from app.services.gemini_client import get_gemini_client
 from app.services.gemini_file_search import upload_document_to_store, get_store_documents
 from app.services.onboarding_repository import get_onboarding_repository
+from app.services.supabase_kb_client import get_kb_client
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -1162,3 +1163,409 @@ async def get_assessment_progress(session_id: str):
             })
 
     return {"tracks": tracks}
+
+
+# ============================================
+# 제품별 지식 학습 (Product Knowledge)
+# ============================================
+
+# 지원 제품 목록
+PRODUCTS = [
+    {
+        "id": "freshservice",
+        "name": "Freshservice",
+        "name_ko": "프레시서비스",
+        "description": "IT Service Management",
+        "description_ko": "IT 서비스 관리",
+        "icon": "cog",
+        "color": "blue",
+    },
+    {
+        "id": "freshdesk",
+        "name": "Freshdesk",
+        "name_ko": "프레시데스크",
+        "description": "Customer Support (Omni 포함)",
+        "description_ko": "고객 지원 (Omni 포함)",
+        "icon": "headset",
+        "color": "green",
+    },
+    {
+        "id": "freshsales",
+        "name": "Freshsales",
+        "name_ko": "프레시세일즈",
+        "description": "CRM & Sales",
+        "description_ko": "CRM 및 영업",
+        "icon": "chart-line",
+        "color": "purple",
+    },
+    {
+        "id": "freshchat",
+        "name": "Freshchat",
+        "name_ko": "프레시챗",
+        "description": "Messaging & Chat",
+        "description_ko": "메시징 및 채팅",
+        "icon": "comments",
+        "color": "orange",
+    },
+]
+
+
+@router.get("/products")
+async def get_products():
+    """지원 제품 목록 조회."""
+    return PRODUCTS
+
+
+@router.get("/products/{product_id}")
+async def get_product(product_id: str):
+    """단일 제품 정보 조회."""
+    product = next((p for p in PRODUCTS if p["id"] == product_id), None)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return product
+
+
+@router.get("/products/{product_id}/categories")
+async def get_product_categories(product_id: str):
+    """제품별 카테고리 목록 조회 (Supabase kb_categories)."""
+    try:
+        kb_client = get_kb_client()
+        categories = kb_client.get_categories(product_id)
+
+        # 프론트엔드 친화적 형식으로 변환
+        return [
+            {
+                "id": cat["id"],
+                "name": cat.get("name_ko") or cat["name_en"],
+                "nameEn": cat["name_en"],
+                "nameKo": cat.get("name_ko"),
+                "slug": cat["slug"],
+                "description": cat.get("description_ko") or cat.get("description_en"),
+                "displayOrder": cat["display_order"],
+            }
+            for cat in categories
+        ]
+    except Exception as e:
+        logger.error(f"Failed to get categories for {product_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/products/{product_id}/categories/{category_slug}")
+async def get_product_category(product_id: str, category_slug: str):
+    """단일 카테고리 상세 조회."""
+    try:
+        kb_client = get_kb_client()
+        category = kb_client.get_category_by_slug(product_id, category_slug)
+
+        if not category:
+            raise HTTPException(status_code=404, detail="Category not found")
+
+        return {
+            "id": category["id"],
+            "name": category.get("name_ko") or category["name_en"],
+            "nameEn": category["name_en"],
+            "nameKo": category.get("name_ko"),
+            "slug": category["slug"],
+            "description": category.get("description_ko") or category.get("description_en"),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get category {category_slug}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/products/{product_id}/categories/{category_slug}/folders")
+async def get_category_folders(product_id: str, category_slug: str):
+    """카테고리 내 폴더 목록 조회."""
+    try:
+        kb_client = get_kb_client()
+
+        # 먼저 카테고리 ID 조회
+        category = kb_client.get_category_by_slug(product_id, category_slug)
+        if not category:
+            raise HTTPException(status_code=404, detail="Category not found")
+
+        folders = kb_client.get_folders_by_category(product_id, category["id"])
+
+        return [
+            {
+                "id": folder["id"],
+                "name": folder.get("name_ko") or folder["name_en"],
+                "nameEn": folder["name_en"],
+                "nameKo": folder.get("name_ko"),
+                "slug": folder["slug"],
+                "displayOrder": folder["display_order"],
+            }
+            for folder in folders
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get folders for {category_slug}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/products/{product_id}/categories/{category_slug}/documents")
+async def get_category_documents(product_id: str, category_slug: str, limit: int = 50):
+    """카테고리 내 문서 목록 조회."""
+    try:
+        kb_client = get_kb_client()
+
+        # 먼저 카테고리 ID 조회
+        category = kb_client.get_category_by_slug(product_id, category_slug)
+        if not category:
+            raise HTTPException(status_code=404, detail="Category not found")
+
+        documents = kb_client.get_documents_by_category(product_id, category["id"], limit)
+
+        return [
+            {
+                "id": doc["id"],
+                "csvId": doc["csv_id"],
+                "title": doc.get("title_ko") or doc["title_en"],
+                "titleEn": doc["title_en"],
+                "titleKo": doc.get("title_ko"),
+                "slug": doc.get("short_slug") or doc["slug"],
+                "folderId": doc.get("folder_id"),
+            }
+            for doc in documents
+        ]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get documents for {category_slug}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/products/{product_id}/stats")
+async def get_product_stats(product_id: str):
+    """제품별 문서 통계 조회."""
+    try:
+        kb_client = get_kb_client()
+        stats = kb_client.get_product_stats(product_id)
+        return stats
+    except Exception as e:
+        logger.error(f"Failed to get stats for {product_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# 제품별 학습 콘텐츠 스트리밍
+# ============================================
+
+def format_documents_for_context(documents: List[dict], max_chars: int = 8000) -> str:
+    """문서 목록을 AI 컨텍스트용 텍스트로 변환."""
+    context_parts = []
+    total_chars = 0
+
+    for doc in documents:
+        title = doc.get("title_ko") or doc.get("title_en", "")
+        content = doc.get("content_text_ko") or doc.get("content_text_en", "")
+
+        # 문서별 최대 길이 제한
+        if len(content) > 2000:
+            content = content[:2000] + "..."
+
+        doc_text = f"### {title}\n{content}\n"
+
+        if total_chars + len(doc_text) > max_chars:
+            break
+
+        context_parts.append(doc_text)
+        total_chars += len(doc_text)
+
+    return "\n".join(context_parts)
+
+
+@router.get("/products/{product_id}/categories/{category_slug}/learn/stream")
+async def stream_category_learning(
+    product_id: str,
+    category_slug: str,
+):
+    """카테고리별 학습 콘텐츠 스트리밍 (Supabase 문서 기반)."""
+    try:
+        kb_client = get_kb_client()
+
+        # 카테고리 정보 조회
+        category = kb_client.get_category_by_slug(product_id, category_slug)
+        if not category:
+            raise HTTPException(status_code=404, detail="Category not found")
+
+        # 해당 카테고리의 문서 조회
+        documents = kb_client.get_documents_by_category(product_id, category["id"], limit=10)
+
+        if not documents:
+            raise HTTPException(status_code=404, detail="No documents found for this category")
+
+        # 컨텍스트 생성
+        context = format_documents_for_context(documents)
+        category_name = category.get("name_ko") or category["name_en"]
+
+        # 학습 콘텐츠 생성 프롬프트
+        prompt = f"""당신은 IT 솔루션 교육 전문가입니다.
+다음은 '{category_name}' 카테고리의 문서입니다.
+
+---
+{context}
+---
+
+위 문서를 바탕으로 신입사원을 위한 학습 콘텐츠를 작성하세요.
+
+포함할 내용:
+1. **개요**: 이 기능이 왜 필요한지, 비즈니스 가치
+2. **핵심 개념**: 알아야 할 주요 용어와 개념
+3. **주요 기능**: 핵심 기능들의 설명
+4. **사용 방법**: 단계별 사용 가이드
+5. **실무 팁**: 효과적으로 활용하는 방법
+6. **자주 묻는 질문**: 예상되는 질문과 답변
+
+마크다운 형식으로, 한국어로 작성하세요.
+문서에 없는 내용은 추측하지 마세요."""
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to prepare learning content: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    async def event_generator():
+        try:
+            client = get_gemini_client()
+
+            from google.genai import types
+
+            generation_config = types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            )
+
+            full_response = ""
+            model_name = client.models[0]
+
+            response = client.client.models.generate_content_stream(
+                model=model_name,
+                contents=prompt,
+                config=generation_config,
+            )
+
+            for chunk in response:
+                if chunk.text:
+                    full_response += chunk.text
+                    yield format_sse("chunk", {"text": chunk.text})
+
+            yield format_sse("result", {"text": full_response})
+
+        except Exception as e:
+            logger.error(f"Learning content stream error: {e}")
+            yield format_sse("error", {"message": str(e)})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream"
+    )
+
+
+# ============================================
+# 제품별 AI 채팅 스트리밍
+# ============================================
+
+@router.get("/products/{product_id}/chat/stream")
+async def stream_product_chat(
+    product_id: str,
+    message: str = Query(..., description="사용자 질문"),
+    sessionId: Optional[str] = Query(None, description="세션 ID"),
+    categorySlug: Optional[str] = Query(None, description="카테고리 슬러그 (선택)"),
+):
+    """제품별 AI 채팅 스트리밍 (Supabase 문서 기반).
+
+    categorySlug이 제공되면 해당 카테고리 내 문서만 검색,
+    없으면 제품 전체 문서에서 검색합니다.
+    """
+    try:
+        kb_client = get_kb_client()
+        product = next((p for p in PRODUCTS if p["id"] == product_id), None)
+
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        product_name = product.get("name_ko") or product["name"]
+
+        # 카테고리 필터링 (선택)
+        category_context = ""
+        if categorySlug:
+            category = kb_client.get_category_by_slug(product_id, categorySlug)
+            if category:
+                documents = kb_client.get_documents_by_category(product_id, category["id"], limit=5)
+                category_name = category.get("name_ko") or category["name_en"]
+                category_context = f"\n현재 학습 중인 카테고리: {category_name}\n"
+            else:
+                documents = []
+        else:
+            # 텍스트 검색으로 관련 문서 찾기
+            documents = kb_client.text_search(message, product_filter=product_id, limit=5)
+
+        # 컨텍스트 생성
+        context = format_documents_for_context(documents) if documents else "관련 문서를 찾지 못했습니다."
+
+        # 시스템 프롬프트
+        system_prompt = f"""당신은 {product_name} 제품 전문가입니다.{category_context}
+
+다음 문서를 참고하여 질문에 답변하세요:
+
+---
+{context}
+---
+
+답변 규칙:
+- 한국어로 답변
+- 마크다운 형식 사용
+- 구체적이고 실용적인 정보 제공
+- 문서에 없는 내용은 "해당 정보는 문서에서 확인되지 않습니다"라고 답변
+- 인사말 없이 바로 본론으로"""
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to prepare chat: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    async def event_generator():
+        try:
+            client = get_gemini_client()
+
+            from google.genai import types
+
+            messages = [
+                {"role": "user", "parts": [{"text": system_prompt}]},
+                {"role": "model", "parts": [{"text": "네, 무엇이든 질문해주세요."}]},
+                {"role": "user", "parts": [{"text": message}]},
+            ]
+
+            generation_config = types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            )
+
+            full_response = ""
+            model_name = client.models[0]
+
+            response = client.client.models.generate_content_stream(
+                model=model_name,
+                contents=messages,
+                config=generation_config,
+            )
+
+            for chunk in response:
+                if chunk.text:
+                    full_response += chunk.text
+                    yield format_sse("chunk", {"text": chunk.text})
+
+            yield format_sse("result", {"text": full_response})
+
+        except Exception as e:
+            logger.error(f"Product chat stream error: {e}")
+            yield format_sse("error", {"message": str(e)})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream"
+    )
