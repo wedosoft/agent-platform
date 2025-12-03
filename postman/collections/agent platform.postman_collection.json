@@ -6,41 +6,6 @@
   },
   "item": [
     {
-      "name": "data ingestion",
-      "id": "e0d2c155-0c6c-4e1c-9f9a-c43c05ee1ef1",
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n    \"includeTickets\": true,\n    \"includeArticles\": false,\n    \"incremental\": false,\n    \"ticketSince\": \"2025-09-01T00:00:00Z\"\n  }",
-          "options": {
-            "raw": {
-              "language": "json"
-            }
-          }
-        },
-        "url": {
-          "raw": "http://localhost:4000/pipeline/sync",
-          "protocol": "http",
-          "host": [
-            "localhost"
-          ],
-          "port": "4000",
-          "path": [
-            "pipeline",
-            "sync"
-          ]
-        },
-        "description": "Generated from cURL: curl -X POST http://localhost:4000/pipeline/sync \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n    \"includeTickets\": true,\n    \"includeArticles\": false,\n    \"incremental\": false\n  }'"
-      }
-    },
-    {
       "name": "fastapi data ingestion",
       "id": "221896a4-2f7c-4e71-b99f-fca6f7fe7f4a",
       "request": {
