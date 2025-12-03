@@ -155,15 +155,97 @@ async def stream_learning_content(
                 store_names=rag_stores,
                 system_instruction=f"당신은 Freshservice {module.name_ko} 전문 교육 강사입니다. 신입사원이 이해하기 쉽도록 명확하고 구체적인 설명을 제공하세요.",
             ):
-                if chunk.get("text"):
-                    text = chunk["text"]
-                    full_response += text
-                    yield format_sse("chunk", {"text": text})
+                event_type = chunk.get("event")
+                data = chunk.get("data", {})
+                
+                if event_type == "status":
+                    yield format_sse("status", data)
+                elif event_type == "result":
+                    text = data.get("text", "")
+                    if text:
+                        full_response = text
+                        yield format_sse("chunk", {"text": text})
+                        yield format_sse("result", {"text": text})
+                elif event_type == "error":
+                    yield format_sse("error", data)
             
-            yield format_sse("result", {"text": full_response})
+            if not full_response:
+                yield format_sse("error", {"message": "콘텐츠를 생성하지 못했습니다."})
             
         except Exception as e:
             logger.error(f"Learning content stream error: {e}")
+            yield format_sse("error", {"message": str(e)})
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream"
+    )
+
+
+@router.get("/modules/{module_id}/section/stream")
+async def stream_section_content(
+    module_id: UUID = Path(..., description="모듈 ID"),
+    session_id: str = Query(..., alias="sessionId", description="세션 ID"),
+    section_id: str = Query(..., alias="sectionId", description="섹션 ID"),
+    section_prompt: str = Query(..., alias="sectionPrompt", description="섹션 프롬프트"),
+):
+    """
+    모듈 섹션별 학습 콘텐츠 스트리밍 (RAG 기반).
+    
+    - 개요, 주요 기능, 실무 활용, FAQ 등 섹션별로 콘텐츠 생성
+    - 짧고 집중된 콘텐츠로 학습 효율 향상
+    """
+    repo = get_curriculum_repository()
+    
+    # 모듈 조회
+    module = await repo.get_module_by_id(module_id)
+    if not module:
+        raise HTTPException(status_code=404, detail="Module not found")
+    
+    async def event_generator():
+        try:
+            settings = _get_settings()
+            store_product = settings.gemini_store_common
+            
+            # RAG 검색 쿼리 구성
+            query = f"""Freshservice {module.name_ko}에 대해 다음 요청에 맞게 답변해주세요.
+
+{section_prompt}
+
+컨텍스트: {module.description or ''}"""
+
+            # RAG 스토어 검색
+            rag_stores = []
+            if store_product:
+                rag_stores.append(store_product)
+            
+            if not rag_stores:
+                yield format_sse("error", {"message": "RAG store not configured"})
+                return
+            
+            # 스트리밍 생성
+            client = _get_file_search_client()
+            
+            async for chunk in client.stream_search(
+                query=query,
+                store_names=rag_stores,
+                system_instruction=f"당신은 Freshservice {module.name_ko} 전문 교육 강사입니다. 신입사원이 이해하기 쉽도록 명확하고 구체적인 설명을 제공하세요. 요청된 분량을 준수하세요.",
+            ):
+                event_type = chunk.get("event")
+                data = chunk.get("data", {})
+                
+                if event_type == "status":
+                    yield format_sse("status", data)
+                elif event_type == "result":
+                    text = data.get("text", "")
+                    if text:
+                        yield format_sse("chunk", {"text": text})
+                        yield format_sse("result", {"text": text})
+                elif event_type == "error":
+                    yield format_sse("error", data)
+            
+        except Exception as e:
+            logger.error(f"Section content stream error: {e}")
             yield format_sse("error", {"message": str(e)})
     
     return StreamingResponse(
