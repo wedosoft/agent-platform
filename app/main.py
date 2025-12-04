@@ -39,6 +39,9 @@ allowed_origins = [
     "https://localhost:3000",
     "https://ameer-timberless-paragogically.ngrok-free.dev",
     "https://www.wedosoft.net",
+    "https://onboarding.wedosoft.net",
+    "https://onboarding-three-pi.vercel.app",
+    "https://onboarding-alans-projects-c08c24fe.vercel.app",
 ]
 
 app.add_middleware(
