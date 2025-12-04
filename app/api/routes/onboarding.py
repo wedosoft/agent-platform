@@ -708,8 +708,8 @@ async def delete_knowledge_article(article_id: str):
 # 제품별 지식 학습 (Product Knowledge)
 # ============================================
 
-# 지원 제품 목록
-PRODUCTS = [
+# 폴백용 제품 목록 (DB 조회 실패 시)
+PRODUCTS_FALLBACK = [
     {
         "id": "freshservice",
         "name": "Freshservice",
@@ -718,15 +718,27 @@ PRODUCTS = [
         "description_ko": "IT 서비스 관리",
         "icon": "cog",
         "color": "blue",
+        "product_type": "standalone",
     },
     {
         "id": "freshdesk",
         "name": "Freshdesk",
         "name_ko": "프레시데스크",
-        "description": "Customer Support (Omni 포함)",
-        "description_ko": "고객 지원 (Omni 포함)",
+        "description": "Customer Support",
+        "description_ko": "고객 지원",
         "icon": "headset",
         "color": "green",
+        "product_type": "standalone",
+    },
+    {
+        "id": "freshdesk_omni",
+        "name": "Freshdesk Omni",
+        "name_ko": "프레시데스크 옴니",
+        "description": "Unified Customer Experience",
+        "description_ko": "통합 고객 경험",
+        "icon": "layer-group",
+        "color": "teal",
+        "product_type": "bundle",
     },
     {
         "id": "freshsales",
@@ -736,6 +748,7 @@ PRODUCTS = [
         "description_ko": "CRM 및 영업",
         "icon": "chart-line",
         "color": "purple",
+        "product_type": "standalone",
     },
     {
         "id": "freshchat",
@@ -745,14 +758,62 @@ PRODUCTS = [
         "description_ko": "메시징 및 채팅",
         "icon": "comments",
         "color": "orange",
+        "product_type": "standalone",
     },
 ]
 
 
 @router.get("/products")
 async def get_products():
-    """지원 제품 목록 조회."""
-    return PRODUCTS
+    """지원 제품 목록 조회 (product_modules + product_bundles 통합)."""
+    try:
+        repo = get_onboarding_repository()
+        supabase = repo.supabase
+        
+        products = []
+        
+        # 1. product_modules (standalone 제품)
+        modules_resp = supabase.table("product_modules").select("*").eq("is_active", True).order("display_order").execute()
+        for mod in modules_resp.data or []:
+            products.append({
+                "id": mod["id"],
+                "name": mod["name_en"],
+                "name_ko": mod["name_ko"],
+                "description": mod.get("description_en") or "",
+                "description_ko": mod.get("description_ko") or "",
+                "icon": mod.get("icon") or "cube",
+                "color": mod.get("color") or "blue",
+                "product_type": "standalone",
+                "display_order": mod.get("display_order", 99),
+            })
+        
+        # 2. product_bundles (번들 제품)
+        bundles_resp = supabase.table("product_bundles").select("*").eq("is_active", True).order("display_order").execute()
+        for bundle in bundles_resp.data or []:
+            products.append({
+                "id": bundle["id"],
+                "name": bundle["name_en"],
+                "name_ko": bundle["name_ko"],
+                "description": bundle.get("description_en") or "",
+                "description_ko": bundle.get("description_ko") or "",
+                "icon": bundle.get("icon") or "layer-group",
+                "color": bundle.get("color") or "teal",
+                "product_type": "bundle",
+                "display_order": bundle.get("display_order", 99),
+            })
+        
+        # display_order로 정렬
+        products.sort(key=lambda x: x.get("display_order", 99))
+        
+        if not products:
+            # DB에 데이터 없으면 폴백
+            return PRODUCTS_FALLBACK
+            
+        return products
+        
+    except Exception as e:
+        logger.warning(f"Failed to load products from DB, using fallback: {e}")
+        return PRODUCTS_FALLBACK
 
 
 @router.get("/products/{product_id}")

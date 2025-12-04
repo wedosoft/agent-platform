@@ -26,6 +26,7 @@ from app.services.curriculum_repository import (
     CurriculumRepositoryError,
 )
 from app.services.gemini_file_search_client import GeminiFileSearchClient
+from app.models.metadata import MetadataFilter
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -349,27 +350,60 @@ async def stream_module_chat(
             settings = _get_settings()
             store_product = settings.gemini_store_common
             
+            # 제품명 매핑 (targetProductId -> 표시명, RAG 필터값)
+            product_id = module.target_product_id or "freshworks"
+            product_display_names = {
+                "freshdesk": "Freshdesk",
+                "freshdesk-omni": "Freshdesk Omni",
+                "freshchat": "Freshchat",
+                "freshsales": "Freshsales",
+                "freshservice": "Freshservice",
+            }
+            # RAG 필터용 제품값 (freshdesk-omni와 freshchat은 freshdesk로 통합 검색)
+            product_rag_filters = {
+                "freshdesk": ["freshdesk"],
+                "freshdesk-omni": ["freshdesk", "freshchat"],
+                "freshchat": ["freshdesk", "freshchat"],
+                "freshsales": ["freshsales"],
+                "freshservice": ["freshservice"],
+            }
+            
+            product_name = product_display_names.get(product_id, "Freshworks")
+            rag_product_values = product_rag_filters.get(product_id, [product_id])
+            
             # 시스템 프롬프트 (모듈 컨텍스트 포함)
-            system_prompt = f"""당신은 Freshservice {module.name_ko} 전문 교육 멘토입니다.
+            system_prompt = f"""당신은 {product_name} {module.name_ko} 전문 교육 멘토입니다.
 
+현재 학습 제품: {product_name}
 현재 학습 모듈: {module.name_ko} ({module.name_en or ''})
 모듈 설명: {module.description or ''}
 
 당신의 역할:
-- 신입사원의 {module.name_ko} 관련 질문에 명확하고 실용적인 답변 제공
-- Freshservice 공식 문서와 베스트 프랙티스 기반 설명
+- 신입사원의 {product_name} {module.name_ko} 관련 질문에 명확하고 실용적인 답변 제공
+- {product_name} 공식 문서와 베스트 프랙티스 기반 설명
 - 실무에서 바로 활용할 수 있는 구체적인 예시 제공
 - 이해를 돕기 위한 단계별 가이드 제공
+
+중요: 반드시 {product_name} 제품에 대해서만 답변하세요. 다른 Freshworks 제품(예: Freshservice, Freshsales 등)의 내용을 혼동하지 마세요.
 
 답변 스타일:
 - 간결하고 본론 중심 (인사말 생략)
 - 한국어로 답변
 - 마크다운 형식 사용"""
 
-            # RAG 스토어 검색
+            # RAG 스토어 및 메타데이터 필터
             rag_stores = []
             if store_product:
                 rag_stores.append(store_product)
+            
+            # 제품별 메타데이터 필터 생성 (IN 연산자로 OR 처리)
+            metadata_filters = None
+            if rag_product_values:
+                metadata_filters = [MetadataFilter(
+                    key="product",
+                    value=",".join(rag_product_values),  # comma-separated for IN operator
+                    operator="IN"
+                )]
             
             # 스트리밍 생성
             client = _get_file_search_client()
@@ -378,12 +412,14 @@ async def stream_module_chat(
             async for chunk in client.stream_search(
                 query=query,
                 store_names=rag_stores,
+                metadata_filters=metadata_filters if metadata_filters else None,
                 conversation_history=history[-4:],  # 최근 4턴
                 system_instruction=system_prompt,
             ):
-                if chunk.get("text"):
-                    text = chunk["text"]
-                    full_response += text
+                # stream_search returns {"event": "result", "data": {"text": "..."}}
+                if chunk.get("event") == "result" and chunk.get("data", {}).get("text"):
+                    text = chunk["data"]["text"]
+                    full_response = text  # 전체 응답
                     yield format_sse("chunk", {"text": text})
             
             # 히스토리 업데이트
