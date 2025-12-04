@@ -15,7 +15,8 @@ class CurriculumModule(BaseModel):
     """커리큘럼 모듈 모델."""
 
     id: UUID
-    product: str = "freshservice"
+    target_product_id: str = Field(..., alias="targetProductId")
+    target_product_type: str = Field("module", alias="targetProductType")
     name_ko: str = Field(..., alias="nameKo")
     name_en: Optional[str] = Field(None, alias="nameEn")
     slug: str
@@ -23,9 +24,10 @@ class CurriculumModule(BaseModel):
     icon: Optional[str] = None
     estimated_minutes: int = Field(30, alias="estimatedMinutes")
     display_order: int = Field(0, alias="displayOrder")
+    learning_objectives: Optional[List[str]] = Field(None, alias="learningObjectives")
+    content_strategy: str = Field("hybrid", alias="contentStrategy")
     is_active: bool = Field(True, alias="isActive")
     kb_category_slug: Optional[str] = Field(None, alias="kbCategorySlug")
-    prerequisites: Optional[List[UUID]] = None
     created_at: Optional[datetime] = Field(None, alias="createdAt")
 
     class Config:
@@ -37,7 +39,8 @@ class CurriculumModuleResponse(BaseModel):
     """커리큘럼 모듈 응답 (진도 포함)."""
 
     id: UUID
-    product: str
+    target_product_id: str = Field(..., alias="targetProductId")
+    target_product_type: str = Field("module", alias="targetProductType")
     name_ko: str = Field(..., alias="nameKo")
     name_en: Optional[str] = Field(None, alias="nameEn")
     slug: str
@@ -46,13 +49,11 @@ class CurriculumModuleResponse(BaseModel):
     estimated_minutes: int = Field(alias="estimatedMinutes")
     display_order: int = Field(alias="displayOrder")
     
-    # 진도 정보
-    is_unlocked: bool = Field(True, alias="isUnlocked")
-    status: str = "not_started"  # not_started, learning, quiz_ready, completed
-    basic_quiz_passed: bool = Field(False, alias="basicQuizPassed")
-    advanced_quiz_passed: bool = Field(False, alias="advancedQuizPassed")
-    basic_quiz_score: Optional[int] = Field(None, alias="basicQuizScore")
-    advanced_quiz_score: Optional[int] = Field(None, alias="advancedQuizScore")
+    # 진도 정보 (단순화: unlock 제거, 기초/심화 → 단일 퀴즈)
+    status: str = "not_started"  # not_started, learning, completed
+    quiz_score: Optional[int] = Field(None, alias="quizScore")
+    quiz_attempts: int = Field(0, alias="quizAttempts")
+    learning_time_minutes: int = Field(0, alias="learningTimeMinutes")
 
     class Config:
         populate_by_name = True
@@ -70,18 +71,16 @@ class QuizChoice(BaseModel):
 
 
 class QuizQuestion(BaseModel):
-    """퀴즈 문제 모델."""
+    """퀴즈 문제 모델 (자가 점검용)."""
 
     id: UUID
     module_id: UUID = Field(..., alias="moduleId")
-    difficulty: str  # basic, advanced
     question_order: int = Field(0, alias="questionOrder")
     question: str
     context: Optional[str] = None
     choices: List[QuizChoice]
     # 정답은 클라이언트에 보내지 않음
-    kb_document_id: Optional[UUID] = Field(None, alias="kbDocumentId")
-    reference_url: Optional[str] = Field(None, alias="referenceUrl")
+    related_doc_url: Optional[str] = Field(None, alias="relatedDocUrl")
 
     class Config:
         populate_by_name = True
@@ -93,6 +92,7 @@ class QuizQuestionWithAnswer(QuizQuestion):
 
     correct_choice_id: str = Field(..., alias="correctChoiceId")
     explanation: Optional[str] = None
+    learning_point: Optional[str] = Field(None, alias="learningPoint")
 
 
 # ============================================
@@ -107,11 +107,10 @@ class QuizAnswer(BaseModel):
 
 
 class QuizSubmitRequest(BaseModel):
-    """퀴즈 제출 요청."""
+    """퀴즈 제출 요청 (자가 점검)."""
 
     session_id: str = Field(..., alias="sessionId")
     module_id: UUID = Field(..., alias="moduleId")
-    difficulty: str  # basic, advanced
     answers: List[QuizAnswer]
     started_at: Optional[datetime] = Field(None, alias="startedAt")
 
@@ -130,17 +129,16 @@ class QuizAnswerResult(BaseModel):
 
 
 class QuizSubmitResponse(BaseModel):
-    """퀴즈 제출 응답."""
+    """퀴즈 제출 응답 (자가 점검 - 통과/불통과 없음)."""
 
     module_id: UUID = Field(..., alias="moduleId")
-    difficulty: str
-    score: int
+    score: int  # 점수 (참고용)
     total_questions: int = Field(..., alias="totalQuestions")
     correct_count: int = Field(..., alias="correctCount")
-    is_passed: bool = Field(..., alias="isPassed")
-    passing_score: int = Field(80, alias="passingScore")
     answers: List[QuizAnswerResult]
     duration_seconds: Optional[int] = Field(None, alias="durationSeconds")
+    # AI 피드백 (개선 포인트 제안)
+    feedback: Optional[str] = None
 
     class Config:
         populate_by_name = True
@@ -151,24 +149,21 @@ class QuizSubmitResponse(BaseModel):
 # ============================================
 
 class ModuleProgress(BaseModel):
-    """모듈 진도 모델."""
+    """모듈 진도 모델 (단순화)."""
 
     id: Optional[UUID] = None
     session_id: str = Field(..., alias="sessionId")
     module_id: UUID = Field(..., alias="moduleId")
-    status: str = "not_started"  # not_started, learning, quiz_ready, completed
+    status: str = "not_started"  # not_started, learning, completed
     
     learning_started_at: Optional[datetime] = Field(None, alias="learningStartedAt")
     learning_completed_at: Optional[datetime] = Field(None, alias="learningCompletedAt")
     
-    basic_quiz_score: Optional[int] = Field(None, alias="basicQuizScore")
-    basic_quiz_passed: bool = Field(False, alias="basicQuizPassed")
-    basic_quiz_attempts: int = Field(0, alias="basicQuizAttempts")
+    # 자가 점검 퀴즈 (통과/불통과 없음, 점수만 기록)
+    quiz_score: Optional[int] = Field(None, alias="quizScore")
+    quiz_attempts: int = Field(0, alias="quizAttempts")
     
-    advanced_quiz_score: Optional[int] = Field(None, alias="advancedQuizScore")
-    advanced_quiz_passed: bool = Field(False, alias="advancedQuizPassed")
-    advanced_quiz_attempts: int = Field(0, alias="advancedQuizAttempts")
-    
+    learning_time_minutes: int = Field(0, alias="learningTimeMinutes")
     completed_at: Optional[datetime] = Field(None, alias="completedAt")
 
     class Config:
@@ -180,7 +175,7 @@ class UpdateProgressRequest(BaseModel):
     """진도 업데이트 요청."""
 
     session_id: str = Field(..., alias="sessionId")
-    status: Optional[str] = None  # learning, quiz_ready
+    status: Optional[str] = None  # learning, completed
     learning_completed: bool = Field(False, alias="learningCompleted")
 
     class Config:

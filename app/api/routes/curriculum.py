@@ -345,32 +345,22 @@ async def stream_module_chat(
 
 
 # ============================================
-# 퀴즈 문제 조회
+# 퀴즈 문제 조회 (자가 점검용)
 # ============================================
 
 @router.get("/modules/{module_id}/questions", response_model=List[QuizQuestion])
 async def get_questions(
     module_id: UUID = Path(..., description="모듈 ID"),
-    difficulty: str = Query(..., description="난이도 (basic, advanced)"),
 ):
     """
-    모듈별 퀴즈 문제 조회.
+    모듈별 자가 점검 퀴즈 문제 조회.
     
     - 정답은 포함되지 않음
-    - difficulty: basic(기초), advanced(심화)
+    - 학습 이해도 확인용 (통과/불통과 없음)
     """
-    if difficulty not in ("basic", "advanced"):
-        raise HTTPException(
-            status_code=400,
-            detail="difficulty must be 'basic' or 'advanced'"
-        )
-    
     try:
         repo = get_curriculum_repository()
-        questions = await repo.get_questions(
-            module_id=module_id,
-            difficulty=difficulty,
-        )
+        questions = await repo.get_questions(module_id=module_id)
         return questions
     except CurriculumRepositoryError as e:
         logger.error(f"Failed to get questions: {e}")
@@ -378,7 +368,7 @@ async def get_questions(
 
 
 # ============================================
-# 퀴즈 제출
+# 퀴즈 제출 (자가 점검)
 # ============================================
 
 @router.post("/modules/{module_id}/submit", response_model=QuizSubmitResponse)
@@ -387,20 +377,13 @@ async def submit_quiz(
     request: QuizSubmitRequest = None,  # type: ignore
 ):
     """
-    퀴즈 제출 및 채점.
+    자가 점검 퀴즈 제출 및 채점.
     
-    - 80점 이상 통과
-    - 기초 퀴즈 통과 후 심화 퀴즈 도전 가능
-    - 기초 + 심화 모두 통과 시 모듈 완료
+    - 통과/불통과 없음, 점수만 참고용으로 제공
+    - 틀린 문제에 대한 설명 제공
     """
     if not request:
         raise HTTPException(status_code=400, detail="Request body is required")
-    
-    if request.difficulty not in ("basic", "advanced"):
-        raise HTTPException(
-            status_code=400,
-            detail="difficulty must be 'basic' or 'advanced'"
-        )
     
     if str(module_id) != str(request.module_id):
         raise HTTPException(
@@ -413,7 +396,6 @@ async def submit_quiz(
         result = await repo.submit_quiz(
             session_id=request.session_id,
             module_id=module_id,
-            difficulty=request.difficulty,
             answers=request.answers,
             started_at=request.started_at,
         )
@@ -447,7 +429,7 @@ async def get_progress_summary(
         
         total = len(modules)
         completed = sum(1 for m in modules if m.status == "completed")
-        in_progress = sum(1 for m in modules if m.status in ("learning", "quiz_ready"))
+        in_progress = sum(1 for m in modules if m.status == "learning")
         
         return ProgressSummary(
             sessionId=session_id,
@@ -480,12 +462,9 @@ async def get_module_progress(
                 status="not_started",
                 learningStartedAt=None,
                 learningCompletedAt=None,
-                basicQuizScore=None,
-                basicQuizPassed=False,
-                basicQuizAttempts=0,
-                advancedQuizScore=None,
-                advancedQuizPassed=False,
-                advancedQuizAttempts=0,
+                quizScore=None,
+                quizAttempts=0,
+                learningTimeMinutes=0,
                 completedAt=None,
             )
         return progress

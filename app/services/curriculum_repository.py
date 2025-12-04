@@ -29,9 +29,7 @@ LOGGER = logging.getLogger(__name__)
 TABLE_MODULES = "curriculum_modules"
 TABLE_QUESTIONS = "quiz_questions"
 TABLE_ATTEMPTS = "quiz_attempts"
-TABLE_PROGRESS = "user_module_progress"
-
-PASSING_SCORE = 80  # 통과 기준 점수
+TABLE_PROGRESS = "module_progress"
 
 
 class CurriculumRepositoryError(RuntimeError):
@@ -59,7 +57,7 @@ class CurriculumRepository:
             query = (
                 self.client.table(TABLE_MODULES)
                 .select("*")
-                .eq("product", product)
+                .eq("target_product_id", product)
                 .order("display_order")
             )
             
@@ -72,7 +70,8 @@ class CurriculumRepository:
             for row in response.data or []:
                 modules.append(CurriculumModule(
                     id=row["id"],
-                    product=row["product"],
+                    targetProductId=row["target_product_id"],
+                    targetProductType=row.get("target_product_type", "module"),
                     nameKo=row["name_ko"],
                     nameEn=row.get("name_en"),
                     slug=row["slug"],
@@ -80,9 +79,10 @@ class CurriculumRepository:
                     icon=row.get("icon"),
                     estimatedMinutes=row.get("estimated_minutes", 30),
                     displayOrder=row.get("display_order", 0),
+                    learningObjectives=row.get("learning_objectives"),
+                    contentStrategy=row.get("content_strategy", "hybrid"),
                     isActive=row.get("is_active", True),
                     kbCategorySlug=row.get("kb_category_slug"),
-                    prerequisites=row.get("prerequisites"),
                     createdAt=row.get("created_at"),
                 ))
             return modules
@@ -105,7 +105,8 @@ class CurriculumRepository:
                 row = response.data[0]
                 return CurriculumModule(
                     id=row["id"],
-                    product=row["product"],
+                    targetProductId=row["target_product_id"],
+                    targetProductType=row.get("target_product_type", "module"),
                     nameKo=row["name_ko"],
                     nameEn=row.get("name_en"),
                     slug=row["slug"],
@@ -113,9 +114,10 @@ class CurriculumRepository:
                     icon=row.get("icon"),
                     estimatedMinutes=row.get("estimated_minutes", 30),
                     displayOrder=row.get("display_order", 0),
+                    learningObjectives=row.get("learning_objectives"),
+                    contentStrategy=row.get("content_strategy", "hybrid"),
                     isActive=row.get("is_active", True),
                     kbCategorySlug=row.get("kb_category_slug"),
-                    prerequisites=row.get("prerequisites"),
                     createdAt=row.get("created_at"),
                 )
             return None
@@ -133,7 +135,7 @@ class CurriculumRepository:
             response = (
                 self.client.table(TABLE_MODULES)
                 .select("*")
-                .eq("product", product)
+                .eq("target_product_id", product)
                 .eq("slug", slug)
                 .limit(1)
                 .execute()
@@ -143,7 +145,8 @@ class CurriculumRepository:
                 row = response.data[0]
                 return CurriculumModule(
                     id=row["id"],
-                    product=row["product"],
+                    targetProductId=row["target_product_id"],
+                    targetProductType=row.get("target_product_type", "module"),
                     nameKo=row["name_ko"],
                     nameEn=row.get("name_en"),
                     slug=row["slug"],
@@ -151,9 +154,10 @@ class CurriculumRepository:
                     icon=row.get("icon"),
                     estimatedMinutes=row.get("estimated_minutes", 30),
                     displayOrder=row.get("display_order", 0),
+                    learningObjectives=row.get("learning_objectives"),
+                    contentStrategy=row.get("content_strategy", "hybrid"),
                     isActive=row.get("is_active", True),
                     kbCategorySlug=row.get("kb_category_slug"),
-                    prerequisites=row.get("prerequisites"),
                     createdAt=row.get("created_at"),
                 )
             return None
@@ -162,22 +166,20 @@ class CurriculumRepository:
             return None
 
     # ============================================
-    # 퀴즈 문제 조회
+    # 퀴즈 문제 조회 (자가 점검용 - 난이도 구분 없음)
     # ============================================
 
     async def get_questions(
         self,
         module_id: UUID,
-        difficulty: str,
         active_only: bool = True,
     ) -> List[QuizQuestion]:
         """모듈별 퀴즈 문제 조회 (정답 제외)."""
         try:
             query = (
                 self.client.table(TABLE_QUESTIONS)
-                .select("id, module_id, difficulty, question_order, question, context, choices, kb_document_id, reference_url")
+                .select("id, module_id, question_order, question, context, choices, related_doc_url")
                 .eq("module_id", str(module_id))
-                .eq("difficulty", difficulty)
                 .order("question_order")
             )
             
@@ -193,13 +195,11 @@ class CurriculumRepository:
                 questions.append(QuizQuestion(
                     id=row["id"],
                     moduleId=row["module_id"],
-                    difficulty=row["difficulty"],
                     questionOrder=row.get("question_order", 0),
                     question=row["question"],
                     context=row.get("context"),
                     choices=choices,
-                    kbDocumentId=row.get("kb_document_id"),
-                    referenceUrl=row.get("reference_url"),
+                    relatedDocUrl=row.get("related_doc_url"),
                 ))
             return questions
         except Exception as e:
@@ -209,7 +209,6 @@ class CurriculumRepository:
     async def get_questions_with_answers(
         self,
         module_id: UUID,
-        difficulty: str,
     ) -> List[QuizQuestionWithAnswer]:
         """모듈별 퀴즈 문제 조회 (정답 포함 - 채점용)."""
         try:
@@ -217,7 +216,6 @@ class CurriculumRepository:
                 self.client.table(TABLE_QUESTIONS)
                 .select("*")
                 .eq("module_id", str(module_id))
-                .eq("difficulty", difficulty)
                 .eq("is_active", True)
                 .order("question_order")
                 .execute()
@@ -229,15 +227,14 @@ class CurriculumRepository:
                 questions.append(QuizQuestionWithAnswer(
                     id=row["id"],
                     moduleId=row["module_id"],
-                    difficulty=row["difficulty"],
                     questionOrder=row.get("question_order", 0),
                     question=row["question"],
                     context=row.get("context"),
                     choices=choices,
                     correctChoiceId=row["correct_choice_id"],
                     explanation=row.get("explanation"),
-                    kbDocumentId=row.get("kb_document_id"),
-                    referenceUrl=row.get("reference_url"),
+                    learningPoint=row.get("learning_point"),
+                    relatedDocUrl=row.get("related_doc_url"),
                 ))
             return questions
         except Exception as e:
@@ -245,23 +242,22 @@ class CurriculumRepository:
             raise CurriculumRepositoryError(str(e)) from e
 
     # ============================================
-    # 퀴즈 제출 및 채점
+    # 퀴즈 제출 및 채점 (자가 점검 - 통과/불통과 없음)
     # ============================================
 
     async def submit_quiz(
         self,
         session_id: str,
         module_id: UUID,
-        difficulty: str,
         answers: List[QuizAnswer],
         started_at: Optional[datetime] = None,
     ) -> QuizSubmitResponse:
-        """퀴즈 제출 및 채점."""
+        """퀴즈 제출 및 채점 (자가 점검용 - 통과/불통과 판정 없음)."""
         try:
             # 1. 정답 조회
-            questions = await self.get_questions_with_answers(module_id, difficulty)
+            questions = await self.get_questions_with_answers(module_id)
             if not questions:
-                raise CurriculumRepositoryError("No questions found for this module and difficulty")
+                raise CurriculumRepositoryError("No questions found for this module")
             
             # 문제 ID -> 정답 매핑
             answer_map: Dict[str, QuizQuestionWithAnswer] = {
@@ -291,10 +287,10 @@ class CurriculumRepository:
             
             total_questions = len(questions)
             score = int((correct_count / total_questions) * 100) if total_questions > 0 else 0
-            is_passed = score >= PASSING_SCORE
             
             # 3. 시도 기록 저장
             now = datetime.now(timezone.utc)
+            actual_started_at = started_at or now
             duration_seconds = None
             if started_at:
                 duration_seconds = int((now - started_at).total_seconds())
@@ -302,36 +298,30 @@ class CurriculumRepository:
             attempt_data = {
                 "session_id": session_id,
                 "module_id": str(module_id),
-                "difficulty": difficulty,
+                "difficulty": "basic",  # 새 스키마 필수 필드
                 "score": score,
                 "total_questions": total_questions,
                 "correct_count": correct_count,
-                "is_passed": is_passed,
-                "answers": [r.model_dump(by_alias=True) for r in results],
-                "started_at": started_at.isoformat() if started_at else None,
+                "answers": [r.model_dump(by_alias=True, mode="json") for r in results],
+                "started_at": actual_started_at.isoformat(),
                 "completed_at": now.isoformat(),
                 "duration_seconds": duration_seconds,
             }
             
             self.client.table(TABLE_ATTEMPTS).insert(attempt_data).execute()
             
-            # 4. 진도 업데이트
+            # 4. 진도 업데이트 (점수 기록)
             await self._update_progress_after_quiz(
                 session_id=session_id,
                 module_id=module_id,
-                difficulty=difficulty,
                 score=score,
-                is_passed=is_passed,
             )
             
             return QuizSubmitResponse(
                 moduleId=module_id,
-                difficulty=difficulty,
                 score=score,
                 totalQuestions=total_questions,
                 correctCount=correct_count,
-                isPassed=is_passed,
-                passingScore=PASSING_SCORE,
                 answers=results,
                 durationSeconds=duration_seconds,
             )
@@ -345,11 +335,9 @@ class CurriculumRepository:
         self,
         session_id: str,
         module_id: UUID,
-        difficulty: str,
         score: int,
-        is_passed: bool,
     ) -> None:
-        """퀴즈 제출 후 진도 업데이트."""
+        """퀴즈 제출 후 진도 업데이트 (자가 점검 완료 시 completed로 변경)."""
         try:
             # 기존 진도 조회
             progress = await self.get_progress(session_id, module_id)
@@ -357,27 +345,14 @@ class CurriculumRepository:
             now = datetime.now(timezone.utc).isoformat()
             
             if progress:
-                # 업데이트
-                update_data = {"updated_at": now}
-                
-                if difficulty == "basic":
-                    update_data["basic_quiz_score"] = score
-                    update_data["basic_quiz_passed"] = is_passed
-                    update_data["basic_quiz_attempts"] = (progress.basic_quiz_attempts or 0) + 1
-                else:  # advanced
-                    update_data["advanced_quiz_score"] = score
-                    update_data["advanced_quiz_passed"] = is_passed
-                    update_data["advanced_quiz_attempts"] = (progress.advanced_quiz_attempts or 0) + 1
-                
-                # 기초+심화 모두 통과하면 완료
-                basic_passed = update_data.get("basic_quiz_passed", progress.basic_quiz_passed)
-                advanced_passed = update_data.get("advanced_quiz_passed", progress.advanced_quiz_passed)
-                
-                if basic_passed and advanced_passed:
-                    update_data["status"] = "completed"
-                    update_data["completed_at"] = now
-                elif is_passed:
-                    update_data["status"] = "quiz_ready"  # 다음 난이도 준비
+                # 업데이트 (점수 기록, 시도 횟수 증가, 완료 상태로 변경)
+                update_data = {
+                    "updated_at": now,
+                    "status": "completed",  # 자가 점검 완료 시 completed
+                    "completed_at": now,
+                    "quiz_score": score,
+                    "quiz_attempts": (progress.quiz_attempts or 0) + 1,
+                }
                 
                 self.client.table(TABLE_PROGRESS).update(update_data).eq(
                     "session_id", session_id
@@ -385,23 +360,17 @@ class CurriculumRepository:
                     "module_id", str(module_id)
                 ).execute()
             else:
-                # 새로 생성
+                # 새로 생성 (학습 시작 없이 퀴즈만 본 경우)
                 insert_data = {
                     "session_id": session_id,
                     "module_id": str(module_id),
-                    "status": "quiz_ready" if is_passed else "learning",
+                    "status": "completed",  # 자가 점검 완료 시 completed
+                    "completed_at": now,
+                    "quiz_score": score,
+                    "quiz_attempts": 1,
                     "created_at": now,
                     "updated_at": now,
                 }
-                
-                if difficulty == "basic":
-                    insert_data["basic_quiz_score"] = score
-                    insert_data["basic_quiz_passed"] = is_passed
-                    insert_data["basic_quiz_attempts"] = 1
-                else:
-                    insert_data["advanced_quiz_score"] = score
-                    insert_data["advanced_quiz_passed"] = is_passed
-                    insert_data["advanced_quiz_attempts"] = 1
                 
                 self.client.table(TABLE_PROGRESS).insert(insert_data).execute()
                 
@@ -438,12 +407,9 @@ class CurriculumRepository:
                     status=row.get("status", "not_started"),
                     learningStartedAt=row.get("learning_started_at"),
                     learningCompletedAt=row.get("learning_completed_at"),
-                    basicQuizScore=row.get("basic_quiz_score"),
-                    basicQuizPassed=row.get("basic_quiz_passed", False),
-                    basicQuizAttempts=row.get("basic_quiz_attempts", 0),
-                    advancedQuizScore=row.get("advanced_quiz_score"),
-                    advancedQuizPassed=row.get("advanced_quiz_passed", False),
-                    advancedQuizAttempts=row.get("advanced_quiz_attempts", 0),
+                    quizScore=row.get("quiz_score"),
+                    quizAttempts=row.get("quiz_attempts", 0),
+                    learningTimeMinutes=row.get("learning_time_minutes", 0),
                     completedAt=row.get("completed_at"),
                 )
             return None
@@ -474,12 +440,9 @@ class CurriculumRepository:
                     status=row.get("status", "not_started"),
                     learningStartedAt=row.get("learning_started_at"),
                     learningCompletedAt=row.get("learning_completed_at"),
-                    basicQuizScore=row.get("basic_quiz_score"),
-                    basicQuizPassed=row.get("basic_quiz_passed", False),
-                    basicQuizAttempts=row.get("basic_quiz_attempts", 0),
-                    advancedQuizScore=row.get("advanced_quiz_score"),
-                    advancedQuizPassed=row.get("advanced_quiz_passed", False),
-                    advancedQuizAttempts=row.get("advanced_quiz_attempts", 0),
+                    quizScore=row.get("quiz_score"),
+                    quizAttempts=row.get("quiz_attempts", 0),
+                    learningTimeMinutes=row.get("learning_time_minutes", 0),
                     completedAt=row.get("completed_at"),
                 )
             return progress_map
@@ -510,8 +473,6 @@ class CurriculumRepository:
                 
                 if learning_completed:
                     update_data["learning_completed_at"] = now
-                    if not status:
-                        update_data["status"] = "quiz_ready"
                 
                 self.client.table(TABLE_PROGRESS).update(update_data).eq(
                     "session_id", session_id
@@ -531,7 +492,6 @@ class CurriculumRepository:
                 
                 if learning_completed:
                     insert_data["learning_completed_at"] = now
-                    insert_data["status"] = "quiz_ready"
                 
                 self.client.table(TABLE_PROGRESS).insert(insert_data).execute()
             
@@ -561,7 +521,7 @@ class CurriculumRepository:
         session_id: str,
         product: str = "freshservice",
     ) -> List[CurriculumModuleResponse]:
-        """모듈 목록과 진도 통합 조회."""
+        """모듈 목록과 진도 통합 조회 (unlock 제거, 모든 모듈 접근 가능)."""
         try:
             # 모듈 목록
             modules = await self.get_modules(product=product)
@@ -569,26 +529,15 @@ class CurriculumRepository:
             # 진도 조회
             progress_map = await self.get_all_progress(session_id)
             
-            # 선행 조건 확인을 위한 모듈 ID -> 모듈 매핑
-            module_map = {str(m.id): m for m in modules}
-            
             result = []
             for module in modules:
                 module_id_str = str(module.id)
                 progress = progress_map.get(module_id_str)
                 
-                # 선행 조건 확인
-                is_unlocked = True
-                if module.prerequisites:
-                    for prereq_id in module.prerequisites:
-                        prereq_progress = progress_map.get(str(prereq_id))
-                        if not prereq_progress or prereq_progress.status != "completed":
-                            is_unlocked = False
-                            break
-                
                 result.append(CurriculumModuleResponse(
                     id=module.id,
-                    product=module.product,
+                    targetProductId=module.target_product_id,
+                    targetProductType=module.target_product_type,
                     nameKo=module.name_ko,
                     nameEn=module.name_en,
                     slug=module.slug,
@@ -596,12 +545,10 @@ class CurriculumRepository:
                     icon=module.icon,
                     estimatedMinutes=module.estimated_minutes,
                     displayOrder=module.display_order,
-                    isUnlocked=is_unlocked,
                     status=progress.status if progress else "not_started",
-                    basicQuizPassed=progress.basic_quiz_passed if progress else False,
-                    advancedQuizPassed=progress.advanced_quiz_passed if progress else False,
-                    basicQuizScore=progress.basic_quiz_score if progress else None,
-                    advancedQuizScore=progress.advanced_quiz_score if progress else None,
+                    quizScore=progress.quiz_score if progress else None,
+                    quizAttempts=progress.quiz_attempts if progress else 0,
+                    learningTimeMinutes=progress.learning_time_minutes if progress else 0,
                 ))
             
             return result
