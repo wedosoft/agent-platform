@@ -15,6 +15,8 @@ from app.models.curriculum import (
     CurriculumModule,
     CurriculumModuleResponse,
     ModuleProgress,
+    ModuleContent,
+    ModuleContentResponse,
     QuizQuestion,
     QuizQuestionWithAnswer,
     QuizChoice,
@@ -30,6 +32,7 @@ TABLE_MODULES = "curriculum_modules"
 TABLE_QUESTIONS = "quiz_questions"
 TABLE_ATTEMPTS = "quiz_attempts"
 TABLE_PROGRESS = "module_progress"
+TABLE_CONTENTS = "module_contents"
 
 
 class CurriculumRepositoryError(RuntimeError):
@@ -344,21 +347,27 @@ class CurriculumRepository:
             
             now = datetime.now(timezone.utc).isoformat()
             
+            LOGGER.info(f"Updating progress after quiz: session={session_id}, module={module_id}, score={score}, existing_progress={progress is not None}")
+            
             if progress:
                 # 업데이트 (점수 기록, 시도 횟수 증가, 완료 상태로 변경)
+                # DB 컬럼: basic_quiz_score, basic_quiz_attempts
                 update_data = {
                     "updated_at": now,
                     "status": "completed",  # 자가 점검 완료 시 completed
                     "completed_at": now,
-                    "quiz_score": score,
-                    "quiz_attempts": (progress.quiz_attempts or 0) + 1,
+                    "basic_quiz_score": score,
+                    "basic_quiz_attempts": (progress.quiz_attempts or 0) + 1,
+                    "basic_quiz_attempted": True,
                 }
                 
-                self.client.table(TABLE_PROGRESS).update(update_data).eq(
+                result = self.client.table(TABLE_PROGRESS).update(update_data).eq(
                     "session_id", session_id
                 ).eq(
                     "module_id", str(module_id)
                 ).execute()
+                
+                LOGGER.info(f"Progress update result: {result.data}")
             else:
                 # 새로 생성 (학습 시작 없이 퀴즈만 본 경우)
                 insert_data = {
@@ -366,17 +375,22 @@ class CurriculumRepository:
                     "module_id": str(module_id),
                     "status": "completed",  # 자가 점검 완료 시 completed
                     "completed_at": now,
-                    "quiz_score": score,
-                    "quiz_attempts": 1,
+                    "basic_quiz_score": score,
+                    "basic_quiz_attempts": 1,
+                    "basic_quiz_attempted": True,
                     "created_at": now,
                     "updated_at": now,
                 }
                 
-                self.client.table(TABLE_PROGRESS).insert(insert_data).execute()
+                result = self.client.table(TABLE_PROGRESS).insert(insert_data).execute()
+                LOGGER.info(f"Progress insert result: {result.data}")
                 
         except Exception as e:
             LOGGER.error(f"Failed to update progress after quiz: {e}")
+            import traceback
+            LOGGER.error(traceback.format_exc())
             # 진도 업데이트 실패는 치명적이지 않으므로 예외를 던지지 않음
+
 
     # ============================================
     # 진도 관리
@@ -407,9 +421,9 @@ class CurriculumRepository:
                     status=row.get("status", "not_started"),
                     learningStartedAt=row.get("learning_started_at"),
                     learningCompletedAt=row.get("learning_completed_at"),
-                    quizScore=row.get("quiz_score"),
-                    quizAttempts=row.get("quiz_attempts", 0),
-                    learningTimeMinutes=row.get("learning_time_minutes", 0),
+                    quizScore=row.get("basic_quiz_score"),  # DB: basic_quiz_score
+                    quizAttempts=row.get("basic_quiz_attempts", 0),  # DB: basic_quiz_attempts
+                    totalTimeSeconds=row.get("total_time_seconds", 0),  # DB: total_time_seconds
                     completedAt=row.get("completed_at"),
                 )
             return None
@@ -440,9 +454,9 @@ class CurriculumRepository:
                     status=row.get("status", "not_started"),
                     learningStartedAt=row.get("learning_started_at"),
                     learningCompletedAt=row.get("learning_completed_at"),
-                    quizScore=row.get("quiz_score"),
-                    quizAttempts=row.get("quiz_attempts", 0),
-                    learningTimeMinutes=row.get("learning_time_minutes", 0),
+                    quizScore=row.get("basic_quiz_score"),  # DB: basic_quiz_score
+                    quizAttempts=row.get("basic_quiz_attempts", 0),  # DB: basic_quiz_attempts
+                    totalTimeSeconds=row.get("total_time_seconds", 0),  # DB: total_time_seconds
                     completedAt=row.get("completed_at"),
                 )
             return progress_map
@@ -534,6 +548,9 @@ class CurriculumRepository:
                 module_id_str = str(module.id)
                 progress = progress_map.get(module_id_str)
                 
+                # total_time_seconds -> learningTimeMinutes (seconds를 minutes로 변환)
+                learning_minutes = (progress.total_time_seconds // 60) if progress else 0
+                
                 result.append(CurriculumModuleResponse(
                     id=module.id,
                     targetProductId=module.target_product_id,
@@ -548,12 +565,152 @@ class CurriculumRepository:
                     status=progress.status if progress else "not_started",
                     quizScore=progress.quiz_score if progress else None,
                     quizAttempts=progress.quiz_attempts if progress else 0,
-                    learningTimeMinutes=progress.learning_time_minutes if progress else 0,
+                    learningTimeMinutes=learning_minutes,
                 ))
             
             return result
         except Exception as e:
             LOGGER.error(f"Failed to get modules with progress: {e}")
+            raise CurriculumRepositoryError(str(e)) from e
+
+    # ============================================
+    # 모듈 콘텐츠 조회
+    # ============================================
+
+    async def get_module_contents(
+        self,
+        module_id: UUID,
+        level: Optional[str] = None,
+    ) -> ModuleContentResponse:
+        """
+        모듈의 학습 콘텐츠 조회.
+        
+        Args:
+            module_id: 모듈 ID
+            level: 난이도 필터 (없으면 전체)
+        
+        Returns:
+            레벨별로 그룹화된 콘텐츠
+        """
+        try:
+            # 모듈 정보 조회
+            module_response = (
+                self.client.table(TABLE_MODULES)
+                .select("id, name_ko")
+                .eq("id", str(module_id))
+                .limit(1)
+                .execute()
+            )
+            
+            if not module_response.data:
+                raise CurriculumRepositoryError(f"Module not found: {module_id}")
+            
+            module_data = module_response.data[0]
+            
+            # 콘텐츠 조회
+            query = (
+                self.client.table(TABLE_CONTENTS)
+                .select("*")
+                .eq("module_id", str(module_id))
+                .eq("is_active", True)
+                .order("display_order")
+            )
+            
+            if level:
+                query = query.eq("level", level)
+            
+            response = query.execute()
+            
+            # 레벨별로 그룹화
+            sections: Dict[str, List[ModuleContent]] = {}
+            levels_set = set()
+            
+            for row in response.data:
+                content = ModuleContent(
+                    id=row["id"],
+                    module_id=row["module_id"],
+                    section_type=row["section_type"],
+                    level=row["level"],
+                    title_ko=row["title_ko"],
+                    title_en=row.get("title_en"),
+                    content_md=row["content_md"],
+                    display_order=row["display_order"],
+                    estimated_minutes=row.get("estimated_minutes", 5),
+                    is_active=row.get("is_active", True),
+                )
+                
+                level_key = content.level
+                levels_set.add(level_key)
+                
+                if level_key not in sections:
+                    sections[level_key] = []
+                sections[level_key].append(content)
+            
+            # 레벨 정렬: basic -> intermediate -> advanced
+            level_order = ["basic", "intermediate", "advanced"]
+            sorted_levels = sorted(levels_set, key=lambda x: level_order.index(x) if x in level_order else 99)
+            
+            return ModuleContentResponse(
+                module_id=module_id,
+                module_name=module_data["name_ko"],
+                levels=sorted_levels,
+                sections=sections,
+            )
+            
+        except CurriculumRepositoryError:
+            raise
+        except Exception as e:
+            LOGGER.error(f"Failed to get module contents: {e}")
+            raise CurriculumRepositoryError(str(e)) from e
+
+    async def get_section_content(
+        self,
+        module_id: UUID,
+        section_type: str,
+        level: str = "basic",
+    ) -> Optional[ModuleContent]:
+        """
+        특정 섹션의 콘텐츠 조회.
+        
+        Args:
+            module_id: 모듈 ID
+            section_type: 섹션 타입 (overview, core_concepts, features, practice, faq)
+            level: 난이도 (basic, intermediate, advanced)
+        
+        Returns:
+            콘텐츠 또는 None
+        """
+        try:
+            response = (
+                self.client.table(TABLE_CONTENTS)
+                .select("*")
+                .eq("module_id", str(module_id))
+                .eq("section_type", section_type)
+                .eq("level", level)
+                .eq("is_active", True)
+                .limit(1)
+                .execute()
+            )
+            
+            if not response.data:
+                return None
+            
+            row = response.data[0]
+            return ModuleContent(
+                id=row["id"],
+                module_id=row["module_id"],
+                section_type=row["section_type"],
+                level=row["level"],
+                title_ko=row["title_ko"],
+                title_en=row.get("title_en"),
+                content_md=row["content_md"],
+                display_order=row["display_order"],
+                estimated_minutes=row.get("estimated_minutes", 5),
+                is_active=row.get("is_active", True),
+            )
+            
+        except Exception as e:
+            LOGGER.error(f"Failed to get section content: {e}")
             raise CurriculumRepositoryError(str(e)) from e
 
 

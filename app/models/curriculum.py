@@ -160,10 +160,11 @@ class ModuleProgress(BaseModel):
     learning_completed_at: Optional[datetime] = Field(None, alias="learningCompletedAt")
     
     # 자가 점검 퀴즈 (통과/불통과 없음, 점수만 기록)
+    # DB 컬럼: basic_quiz_score, basic_quiz_attempts
     quiz_score: Optional[int] = Field(None, alias="quizScore")
     quiz_attempts: int = Field(0, alias="quizAttempts")
     
-    learning_time_minutes: int = Field(0, alias="learningTimeMinutes")
+    total_time_seconds: int = Field(0, alias="totalTimeSeconds")
     completed_at: Optional[datetime] = Field(None, alias="completedAt")
 
     class Config:
@@ -191,6 +192,41 @@ class ProgressSummary(BaseModel):
     in_progress_modules: int = Field(..., alias="inProgressModules")
     completion_rate: float = Field(..., alias="completionRate")
     modules: List[CurriculumModuleResponse]
+
+    class Config:
+        populate_by_name = True
+
+
+# ============================================
+# Module Content (학습 콘텐츠)
+# ============================================
+
+class ModuleContent(BaseModel):
+    """모듈 학습 콘텐츠 (정적 콘텐츠)."""
+
+    id: UUID
+    module_id: UUID = Field(..., alias="moduleId")
+    section_type: str = Field(..., alias="sectionType")  # overview, core_concepts, features, practice, faq
+    level: str = "basic"  # basic, intermediate, advanced
+    title_ko: str = Field(..., alias="titleKo")
+    title_en: Optional[str] = Field(None, alias="titleEn")
+    content_md: str = Field(..., alias="contentMd")
+    display_order: int = Field(0, alias="displayOrder")
+    estimated_minutes: int = Field(5, alias="estimatedMinutes")
+    is_active: bool = Field(True, alias="isActive")
+
+    class Config:
+        populate_by_name = True
+        from_attributes = True
+
+
+class ModuleContentResponse(BaseModel):
+    """모듈별 콘텐츠 응답 (레벨별 섹션 포함)."""
+
+    module_id: UUID = Field(..., alias="moduleId")
+    module_name: str = Field(..., alias="moduleName")
+    levels: List[str]  # ["basic", "intermediate", "advanced"]
+    sections: Dict[str, List[ModuleContent]]  # level -> contents
 
     class Config:
         populate_by_name = True

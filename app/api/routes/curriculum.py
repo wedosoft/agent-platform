@@ -18,6 +18,8 @@ from app.models.curriculum import (
     ModuleProgress,
     UpdateProgressRequest,
     ProgressSummary,
+    ModuleContent,
+    ModuleContentResponse,
 )
 from app.services.curriculum_repository import (
     get_curriculum_repository,
@@ -182,6 +184,61 @@ async def stream_learning_content(
     )
 
 
+# ============================================
+# 모듈 콘텐츠 조회 (정적 콘텐츠 - DB에서 로드)
+# ============================================
+
+@router.get("/modules/{module_id}/contents", response_model=ModuleContentResponse)
+async def get_module_contents(
+    module_id: UUID = Path(..., description="모듈 ID"),
+    level: Optional[str] = Query(None, description="난이도 필터 (basic, intermediate, advanced)"),
+):
+    """
+    모듈의 정적 학습 콘텐츠 조회.
+    
+    - DB에 저장된 콘텐츠를 즉시 반환 (LLM 지연 없음)
+    - 난이도별 (기초/중급/고급) 콘텐츠 제공
+    - 각 섹션: 개요, 핵심 개념, 기능, 실습, FAQ
+    """
+    try:
+        repo = get_curriculum_repository()
+        contents = await repo.get_module_contents(module_id, level)
+        return contents
+    except CurriculumRepositoryError as e:
+        logger.error(f"Failed to get module contents: {e}")
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/modules/{module_id}/contents/{section_type}", response_model=ModuleContent)
+async def get_section_content(
+    module_id: UUID = Path(..., description="모듈 ID"),
+    section_type: str = Path(..., description="섹션 타입 (overview, core_concepts, features, practice, faq)"),
+    level: str = Query("basic", description="난이도 (basic, intermediate, advanced)"),
+):
+    """
+    특정 섹션의 콘텐츠 조회.
+    
+    - 한 섹션만 필요할 때 사용
+    - 콘텐츠가 없으면 404 반환
+    """
+    try:
+        repo = get_curriculum_repository()
+        content = await repo.get_section_content(module_id, section_type, level)
+        if not content:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Content not found for section '{section_type}' at level '{level}'"
+            )
+        return content
+    except CurriculumRepositoryError as e:
+        logger.error(f"Failed to get section content: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# 모듈 섹션 콘텐츠 스트리밍 (LLM 기반 - 폴백/채팅용)
+# ============================================
+
 @router.get("/modules/{module_id}/section/stream")
 async def stream_section_content(
     module_id: UUID = Path(..., description="모듈 ID"),
@@ -194,6 +251,7 @@ async def stream_section_content(
     
     - 개요, 주요 기능, 실무 활용, FAQ 등 섹션별로 콘텐츠 생성
     - 짧고 집중된 콘텐츠로 학습 효율 향상
+    - 정적 콘텐츠가 없을 때 폴백으로 사용
     """
     repo = get_curriculum_repository()
     
@@ -501,4 +559,47 @@ async def update_module_progress(
         return progress
     except CurriculumRepositoryError as e:
         logger.error(f"Failed to update module progress: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================
+# 디버그: 퀴즈 시도 조회
+# ============================================
+
+@router.get("/debug/quiz-attempts")
+async def debug_quiz_attempts(
+    session_id: str = Query(None, alias="sessionId", description="세션 ID"),
+    module_id: str = Query(None, alias="moduleId", description="모듈 ID"),
+):
+    """디버그: quiz_attempts 테이블 조회."""
+    try:
+        repo = get_curriculum_repository()
+        query = repo.client.table("quiz_attempts").select("*")
+        
+        if session_id:
+            query = query.eq("session_id", session_id)
+        if module_id:
+            query = query.eq("module_id", module_id)
+        
+        response = query.order("created_at", desc=True).limit(10).execute()
+        return {"attempts": response.data, "count": len(response.data)}
+    except Exception as e:
+        logger.error(f"Debug quiz attempts error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/debug/module-progress-schema")
+async def debug_module_progress_schema():
+    """디버그: module_progress 테이블 스키마 조회."""
+    try:
+        repo = get_curriculum_repository()
+        # Get first row to see columns
+        response = repo.client.table("module_progress").select("*").limit(1).execute()
+        if response.data:
+            columns = list(response.data[0].keys())
+        else:
+            columns = ["No data in table"]
+        return {"columns": columns, "sample_data": response.data}
+    except Exception as e:
+        logger.error(f"Debug module progress schema error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
