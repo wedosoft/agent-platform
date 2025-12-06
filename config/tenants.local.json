@@ -11,9 +11,9 @@
     ],
     "gemini": {
       "store_names": [
-        "fileSearchStores/freshworkskb20251121-5rd728ruhk21"
+        "fileSearchStores/freshworkskb-09wgxqegfp5j"
       ],
-      "default_store": "fileSearchStores/freshworkskb20251121-5rd728ruhk21"
+      "default_store": "fileSearchStores/freshworkskb-09wgxqegfp5j"
     }
   }
 }

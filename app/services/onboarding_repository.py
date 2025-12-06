@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
-from supabase import Client, create_client
+from supabase import Client, ClientOptions, create_client
 
 from app.core.config import get_settings
 from app.models.onboarding import (
@@ -232,6 +232,7 @@ def _build_supabase_client() -> Optional[Client]:
     return create_client(
         settings.supabase_common_url,
         settings.supabase_common_service_role_key,
+        options=ClientOptions(schema="onboarding"),
     )
 
 
