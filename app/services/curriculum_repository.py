@@ -8,7 +8,7 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from supabase import Client, create_client
+from supabase import Client, create_client, ClientOptions
 
 from app.core.config import get_settings
 from app.models.curriculum import (
@@ -730,6 +730,7 @@ def get_curriculum_repository() -> CurriculumRepository:
         client = create_client(
             settings.supabase_common_url,
             settings.supabase_common_service_role_key,
+            options=ClientOptions(schema="onboarding"),
         )
         _repository = CurriculumRepository(client)
     
