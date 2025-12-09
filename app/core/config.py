@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     api_prefix: str = "/api"
     app_name: str = "Agent Platform Backend"
+    log_level: str = "INFO"
     session_ttl_minutes: int = 30
     pipeline_base_url: str = "http://localhost:4000/pipeline"
     redis_url: Optional[str] = None

@@ -3,7 +3,7 @@
 import json
 import logging
 from typing import List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Path
 from fastapi.responses import StreamingResponse
@@ -13,6 +13,7 @@ from app.models.curriculum import (
     CurriculumModule,
     CurriculumModuleResponse,
     QuizQuestion,
+    QuizChoice,
     QuizSubmitRequest,
     QuizSubmitResponse,
     ModuleProgress,
@@ -26,6 +27,7 @@ from app.services.curriculum_repository import (
     CurriculumRepositoryError,
 )
 from app.services.gemini_file_search_client import GeminiFileSearchClient
+from app.services.gemini_client import get_gemini_client
 from app.models.metadata import MetadataFilter
 from app.core.config import get_settings
 
@@ -442,6 +444,92 @@ async def stream_module_chat(
 # 퀴즈 문제 조회 (자가 점검용)
 # ============================================
 
+async def _generate_quiz_questions(module_id: UUID, module_name: str, module_desc: str = "") -> List[QuizQuestion]:
+    """Gemini를 사용하여 퀴즈 문제 생성 및 DB 저장."""
+    try:
+        client = get_gemini_client()
+        prompt = f"""
+        Topic: {module_name}
+        Description: {module_desc or module_name}
+        
+        Generate 3 multiple-choice quiz questions to check understanding of this topic.
+        Target audience: New employees learning the system.
+        Language: Korean.
+        
+        Format: JSON Array of objects.
+        Each object must have:
+        - question: string
+        - choices: array of objects {{"id": "a", "text": "..."}} (ids should be a, b, c, d)
+        - context: string (optional, brief background context)
+        - correct_choice_id: string (id of the correct choice, e.g., "a")
+        - explanation: string (explanation of why the answer is correct)
+        - learning_point: string (key takeaway)
+        
+        Output ONLY the JSON array.
+        """
+        
+        response_stream = client.generate_content_stream(contents=prompt)
+        text = ""
+        async for chunk in response_stream:
+            if chunk.text:
+                text += chunk.text
+        
+        # Clean up markdown code blocks if present
+        if text.strip().startswith("```json"):
+            text = text.strip()[7:]
+        if text.strip().endswith("```"):
+            text = text.strip()[:-3]
+            
+        data = json.loads(text)
+        
+        repo = get_curriculum_repository()
+        db_questions = []
+        result_questions = []
+        
+        for i, item in enumerate(data):
+            q_id = str(uuid4())
+            
+            # DB 저장용 데이터
+            db_q = {
+                "id": q_id,
+                "module_id": str(module_id),
+                "question_order": i + 1,
+                "difficulty": "basic",
+                "question": item["question"],
+                "context": item.get("context"),
+                "choices": item["choices"],
+                "correct_choice_id": item["correct_choice_id"],
+                "explanation": item["explanation"],
+                "learning_point": item.get("learning_point"),
+                "is_active": True
+            }
+            db_questions.append(db_q)
+            
+            # 반환용 데이터 (정답 제외)
+            q = QuizQuestion(
+                id=UUID(q_id),
+                moduleId=module_id,
+                questionOrder=i+1,
+                question=item["question"],
+                context=item.get("context"),
+                choices=[QuizChoice(id=c["id"], text=c["text"]) for c in item["choices"]],
+                relatedDocUrl=None
+            )
+            result_questions.append(q)
+            
+        # DB에 저장 (비동기적으로 처리하거나 기다림)
+        try:
+            await repo.create_questions(db_questions)
+            logger.info(f"Successfully saved {len(db_questions)} generated questions to DB.")
+        except Exception as e:
+            logger.error(f"Failed to save generated questions to DB: {e}")
+            
+        return result_questions
+    except Exception as e:
+        logger.error(f"Failed to generate quiz questions: {e}")
+        return []
+
+
 @router.get("/modules/{module_id}/questions", response_model=List[QuizQuestion])
 async def get_questions(
     module_id: UUID = Path(..., description="모듈 ID"),
@@ -452,13 +540,33 @@ async def get_questions(
     - 정답은 포함되지 않음
     - 학습 이해도 확인용 (통과/불통과 없음)
     """
+    repo = get_curriculum_repository()
+    questions = []
+    
     try:
-        repo = get_curriculum_repository()
         questions = await repo.get_questions(module_id=module_id)
-        return questions
-    except CurriculumRepositoryError as e:
-        logger.error(f"Failed to get questions: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.warning(f"Failed to get questions from DB (might be missing tables): {e}")
+        # DB 에러 시에도 AI 생성 시도로 넘어감
+    
+    if not questions:
+        # 퀴즈가 없으면 AI로 생성 및 저장
+        logger.info(f"No questions found for module {module_id}. Generating with AI...")
+        
+        module_name = "Onboarding Knowledge"
+        module_desc = ""
+        
+        try:
+            module = await repo.get_module_by_id(module_id)
+            if module:
+                module_name = module.nameKo
+                module_desc = module.description
+        except Exception:
+            logger.warning(f"Failed to get module info for {module_id}, using default topic.")
+            
+        questions = await _generate_quiz_questions(module_id, module_name, module_desc)
+            
+    return questions
 
 
 # ============================================

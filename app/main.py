@@ -13,6 +13,13 @@ from app.services.scheduler_service import get_scheduler_service
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+# Configure logging
+logging.basicConfig(
+    level=settings.log_level,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logging.getLogger("app").setLevel(settings.log_level)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

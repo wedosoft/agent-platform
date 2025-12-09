@@ -1075,7 +1075,7 @@ async def stream_category_learning(
             from google.genai import types
 
             generation_config = types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                thinking_config=types.ThinkingConfig(thinking_budget=1024),
             )
 
             full_response = ""
@@ -1181,7 +1181,7 @@ async def stream_product_chat(
             ]
 
             generation_config = types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                thinking_config=types.ThinkingConfig(thinking_budget=1024),
             )
 
             full_response = ""

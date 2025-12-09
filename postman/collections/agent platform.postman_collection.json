@@ -34,7 +34,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n    \"include_tickets\": true,\n    \"include_articles\": false,\n    \"ticket_since\": \"2025-09-01T00:00:00Z\"\n  }",
+          "raw": "{\n    \"include_tickets\": true,\n    \"include_articles\": true,\n    \"incremental\": false\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -92,6 +92,16 @@
           ]
         },
         "description": "Generated from cURL: \ncurl \"http://localhost:8000/api/sync/status/{job_id}\" \\\n  -H \"X-Tenant-ID: wedosoft\" \\\n  -H \"X-Platform: freshdesk\""
+      }
+    },
+    {
+      "name": "New Request",
+      "id": "0eb78116-e9e7-4e15-8e11-990037888f68",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": ""
+        }
       }
     }
   ]

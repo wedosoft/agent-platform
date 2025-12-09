@@ -56,6 +56,11 @@ async def verify_freshdesk_api_key(domain: str, api_key: str) -> bool:
                 url,
                 auth=(api_key, "X"),  # Freshdesk uses API key as username
             )
+            
+            # 429 Too Many Requests is considered valid auth but rate limited
+            if response.status_code == 429:
+                return True
+                
             return response.status_code == 200
     except httpx.RequestError:
         return False

@@ -209,6 +209,17 @@ class CurriculumRepository:
             LOGGER.error(f"Failed to get quiz questions: {e}")
             raise CurriculumRepositoryError(str(e)) from e
 
+    async def create_questions(self, questions: List[Dict[str, Any]]) -> None:
+        """퀴즈 문제 일괄 생성 (AI 생성 결과 저장용)."""
+        try:
+            if not questions:
+                return
+            
+            self.client.table(TABLE_QUESTIONS).insert(questions).execute()
+        except Exception as e:
+            LOGGER.error(f"Failed to create questions: {e}")
+            raise CurriculumRepositoryError(str(e)) from e
+
     async def get_questions_with_answers(
         self,
         module_id: UUID,

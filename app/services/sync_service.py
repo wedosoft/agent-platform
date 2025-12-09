@@ -18,7 +18,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Awaitable
+from typing import Any, Callable, Awaitable, Optional
 
 from app.services.freshdesk_client import FreshdeskClient
 from app.services.ingestion_service import FreshdeskIngestionService, TicketIngestionRecord
@@ -227,12 +227,23 @@ class SyncService:
             
             # Sync tickets
             if opts.include_tickets:
-                ticket_docs = await self._sync_tickets(
-                    since=ticket_since,
-                    concurrency=opts.max_concurrency,
-                )
-                all_documents.extend(ticket_docs)
-                result.tickets_count = len(ticket_docs)
+                # Use batch processing if upload_callback is provided
+                if upload_callback:
+                    ticket_count = await self._sync_tickets_batch(
+                        upload_callback=upload_callback,
+                        since=ticket_since,
+                        concurrency=opts.max_concurrency,
+                    )
+                    result.tickets_count = ticket_count
+                else:
+                    # Legacy mode (collect all)
+                    ticket_docs = await self._sync_tickets(
+                        since=ticket_since,
+                        concurrency=opts.max_concurrency,
+                    )
+                    all_documents.extend(ticket_docs)
+                    result.tickets_count = len(ticket_docs)
+                
                 self._last_ticket_sync = datetime.now()
             
             # Sync articles
@@ -242,9 +253,9 @@ class SyncService:
                 result.articles_count = len(article_docs)
                 self._last_article_sync = datetime.now()
             
-            result.documents_count = len(all_documents)
+            result.documents_count = result.tickets_count + result.articles_count
             
-            # Upload if callback provided
+            # Upload remaining documents (articles or legacy tickets)
             if upload_callback and all_documents:
                 await self._upload_documents(
                     all_documents,
@@ -252,7 +263,7 @@ class SyncService:
                     batch_size=opts.upload_batch_size,
                 )
             
-            # Save metadata to Supabase
+            # Save metadata to Supabase (final flush)
             if self._metadata_service:
                 await self._save_metadata(result)
             
@@ -273,6 +284,74 @@ class SyncService:
             self._progress.error = str(e)
             result.errors.append(str(e))
             raise
+
+    async def _sync_tickets_batch(
+        self,
+        upload_callback: UploadCallback,
+        since: datetime | None = None,
+        concurrency: int = 5,
+    ) -> int:
+        """
+        Sync tickets in batches: Fetch Generator → Normalize → Transform → Upload
+        """
+        self._progress.phase = "tickets"
+        logger.info(f"Fetching tickets in batches (since={since})")
+        
+        total_count = 0
+        
+        async for batch_records in self._ingestion_service.fetch_tickets_generator(
+            since=since,
+            include_conversations=True,
+            conversation_concurrency=concurrency,
+        ):
+            # Normalize batch
+            normalized_tickets = []
+            for record in batch_records:
+                # Map ticket entities using EntityMapper
+                entity_labels = await self._entity_mapper.map_ticket_entities(record.ticket)
+                
+                # Enrich ticket with labels
+                enriched_ticket = {
+                    **record.ticket,
+                    "responder_label": entity_labels["responder_label"],
+                    "group_label": entity_labels["group_label"],
+                    "company_label": entity_labels["company_label"],
+                    "requester_label": entity_labels["requester_label"],
+                    "product_label": entity_labels["product_label"],
+                }
+                
+                # Normalize
+                normalized = self._normalizer.normalize_ticket(
+                    enriched_ticket,
+                    record.conversations,
+                )
+                normalized_tickets.append(normalized)
+                
+                # Collect metadata for Supabase
+                if self._metadata_service:
+                    self._collect_ticket_metadata(record.ticket, normalized)
+            
+            # Transform batch
+            documents = self._transformer.transform_tickets(normalized_tickets)
+            
+            if documents:
+                # Upload batch immediately
+                await self._upload_documents(
+                    documents,
+                    upload_callback,
+                    batch_size=len(documents) # Upload whole batch at once
+                )
+                total_count += len(documents)
+            
+            # Update progress
+            self._progress.tickets_processed += len(batch_records)
+            self._progress.tickets_total = self._progress.tickets_processed # Estimate total as we go
+            
+            # Flush metadata periodically (optional, but good for safety)
+            # For now, we keep metadata in memory until end or implement batch flush
+            
+        logger.info(f"Batch sync completed: {total_count} tickets processed")
+        return total_count
     
     async def _sync_tickets(
         self,

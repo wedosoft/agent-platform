@@ -13,7 +13,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, AsyncGenerator
 
 from app.services.freshdesk_client import FreshdeskClient, FreshdeskClientError
 
@@ -121,6 +121,64 @@ class FreshdeskIngestionService:
         logger.info(f"Attached {total_conversations} conversations to {len(records)} tickets")
         
         return records
+
+    async def fetch_tickets_generator(
+        self,
+        *,
+        since: Optional[datetime] = None,
+        include_conversations: Optional[bool] = None,
+        conversation_concurrency: Optional[int] = None,
+        per_page: Optional[int] = None,
+        include_fields: Optional[List[str]] = None
+    ) -> AsyncGenerator[List[TicketIngestionRecord], None]:
+        """
+        티켓 + 대화 수집 (제너레이터 방식 - 배치 처리용)
+        """
+        _per_page = per_page or self.options.per_page
+        _include_conversations = (
+            include_conversations 
+            if include_conversations is not None 
+            else self.options.include_conversations
+        )
+        _concurrency = conversation_concurrency or self.options.conversation_concurrency
+        
+        # 추가 필드 결정
+        _include_fields = list(include_fields or [])
+        if self.options.include_description and "description" not in _include_fields:
+            _include_fields.append("description")
+        
+        logger.info(f"Fetching tickets generator (since={since}, concurrency={_concurrency})")
+        
+        page = 1
+        while True:
+            # 1. 페이지 단위 티켓 수집
+            tickets = await self.client.get_tickets(
+                page=page,
+                per_page=_per_page,
+                updated_since=since,
+                include_fields=_include_fields or None,
+            )
+            
+            if not tickets:
+                break
+            
+            logger.info(f"Fetched page {page}: {len(tickets)} tickets")
+            
+            # 2. 대화 병렬 첨부
+            if _include_conversations:
+                records = await self._attach_conversations(tickets, _concurrency)
+            else:
+                records = [
+                    TicketIngestionRecord(ticket=t, conversations=[]) 
+                    for t in tickets
+                ]
+            
+            yield records
+            
+            if len(tickets) < _per_page:
+                break
+                
+            page += 1
     
     async def fetch_articles(
         self,

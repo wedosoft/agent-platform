@@ -161,7 +161,7 @@ class FreshdeskClient:
                 break
             
             all_tickets.extend(tickets)
-            logger.debug(f"Fetched page {page}: {len(tickets)} tickets (total: {len(all_tickets)})")
+            logger.info(f"Fetched page {page}: {len(tickets)} tickets (total: {len(all_tickets)})")
             
             if len(tickets) < per_page:
                 break
