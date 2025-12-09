@@ -51,15 +51,16 @@ class SaveProgressRequest(BaseModel):
 # 시스템 프롬프트
 # ============================================
 
-MENTOR_SYSTEM_PROMPT = """당신은 글로벌 최상위 테크 기업의 시니어 멘토 '온보딩 나침반'입니다.
+MENTOR_SYSTEM_PROMPT = """당신은 신입사원을 돕는 친절하고 전문적인 시니어 멘토 '온보딩 나침반'입니다.
 
 당신의 특징:
-- 간결하고 본론 중심의 답변 (인사말이나 이름 언급 없이 바로 핵심으로)
-- 실질적이고 실행 가능한 조언
+- 친절하고 부드러운 '해요체' 사용 (예: ~해요, ~입니다)
+- 신입사원의 입장을 이해하고 공감하는 태도
+- 실질적이고 실행 가능한 조언을 알기 쉽게 설명
 - 생산성, 시간 관리, 커뮤니케이션, 문제 해결, 협업에 대한 전문 지식
 - 한국어로 답변
 
-질문에 대해 바로 본론으로 들어가서 실용적인 조언을 제공하세요. 이름을 부르거나 인사말을 하지 마세요."""
+질문에 대해 친절하게 설명하고, 신입사원이 업무에 잘 적응할 수 있도록 격려와 구체적인 가이드를 함께 제공하세요."""
 
 
 def get_feedback_prompt(
@@ -172,6 +173,34 @@ async def create_session(request: CreateSessionRequest):
     )
 
 
+
+async def classify_intent(query: str) -> str:
+    """사용자 질문의 의도를 분류합니다 (product vs general)."""
+    try:
+        client = get_gemini_client()
+        prompt = f"""
+        다음 질문이 '특정 제품(Freshworks, Google Workspace, Monday.com 등)의 기능이나 사용법'에 관한 것이면 'product',
+        '회사 생활, 온보딩, 일반적인 업무 팁, 인사/복지' 등에 관한 것이면 'general'로 분류하세요.
+        
+        질문: "{query}"
+        
+        답변은 오직 'product' 또는 'general' 단어 하나만 출력하세요.
+        """
+        
+        response = client.generate_content(
+            contents=prompt,
+            config={"thinking_config": {"thinking_budget": 0}}
+        )
+        
+        intent = response.text.strip().lower()
+        if "product" in intent:
+            return "product"
+        return "general"
+    except Exception as e:
+        logger.warning(f"Intent classification failed: {e}")
+        return "general"  # 기본값
+
+
 # ============================================
 # 채팅 스트리밍 (AI 멘토)
 # ============================================
@@ -195,13 +224,21 @@ async def chat_stream(
     user_name = session.get("userName", "신입사원")
     history = session.get("conversationHistory", [])
     
-    # 사용할 RAG 스토어 목록
-    rag_stores = []
-    if STORE_PRODUCT:
-        rag_stores.append(STORE_PRODUCT)
-    if STORE_HANDOVER:
-        rag_stores.append(STORE_HANDOVER)
+    # 의도 분류 및 RAG 검색
+    intent = await classify_intent(query)
+    rag_context = ""
     
+    if intent == "product":
+        try:
+            kb_client = get_kb_client()
+            # 모든 제품에 대해 검색 (product_filter=None)
+            documents = kb_client.text_search(query, limit=3)
+            if documents:
+                rag_context = format_documents_for_context(documents)
+                rag_context = f"\n\n[참고 문서]\n{rag_context}\n\n위 참고 문서를 바탕으로 답변해주세요."
+        except Exception as e:
+            logger.error(f"Product RAG search failed: {e}")
+
     async def event_generator():
         try:
             client = get_gemini_client()
@@ -217,26 +254,28 @@ async def chat_stream(
                 messages.append({"role": "user", "parts": [{"text": turn.get("user", "")}]})
                 messages.append({"role": "model", "parts": [{"text": turn.get("model", "")}]})
             
-            # 현재 질문
-            messages.append({"role": "user", "parts": [{"text": query}]})
+            # 현재 질문 (RAG 컨텍스트 포함)
+            final_query = query + rag_context
+            messages.append({"role": "user", "parts": [{"text": final_query}]})
             
             # RAG 검색 설정 (여러 스토어 동시 검색)
             from google.genai import types
 
             # 스토어가 있으면 파일 검색 도구 추가
             tools = None
-            if rag_stores:
-                tools = [
-                    types.Tool(
-                        file_search=types.FileSearch(
-                            file_search_store_names=rag_stores
-                        )
-                    )
-                ]
+            # TODO: google-genai SDK 1.47.0에서 FileSearch 타입을 지원하지 않아 임시 비활성화
+            # if rag_stores:
+            #     tools = [
+            #         types.Tool(
+            #             file_search=types.FileSearch(
+            #                 file_search_store_names=rag_stores
+            #             )
+            #         )
+            #     ]
 
             generation_config = types.GenerateContentConfig(
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
-                tools=tools,
+                # tools=tools,
             )
 
             full_response = ""
@@ -254,7 +293,7 @@ async def chat_stream(
                     full_response += chunk.text
                     yield format_sse("chunk", {"text": chunk.text})
             
-            # 히스토리에 추가
+            # 히스토리에 추가 (저장은 원본 쿼리로)
             history.append({"user": query, "model": full_response})
             session["conversationHistory"] = history[-10:]  # 최근 10턴만 유지
             
