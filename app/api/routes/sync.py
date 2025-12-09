@@ -13,7 +13,7 @@ import asyncio
 import logging
 from dataclasses import asdict
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -39,8 +39,8 @@ class SyncTriggerRequest(BaseModel):
     include_tickets: bool = Field(default=True, description="티켓 동기화 포함")
     include_articles: bool = Field(default=True, description="아티클 동기화 포함")
     incremental: bool = Field(default=False, description="증분 동기화 (마지막 동기화 이후 변경분만)")
-    ticket_since: datetime | None = Field(default=None, description="이 시각 이후 업데이트된 티켓만")
-    article_since: datetime | None = Field(default=None, description="이 시각 이후 업데이트된 아티클만")
+    ticket_since: Optional[datetime] = Field(default=None, description="이 시각 이후 업데이트된 티켓만")
+    article_since: Optional[datetime] = Field(default=None, description="이 시각 이후 업데이트된 아티클만")
     max_concurrency: int = Field(default=5, ge=1, le=20, description="병렬 처리 수")
     batch_size: int = Field(default=10, ge=1, le=100, description="배치 크기")
 
@@ -65,9 +65,9 @@ class SyncStatusResponse(BaseModel):
     articles_total: int
     documents_uploaded: int
     documents_total: int
-    started_at: datetime | None
-    completed_at: datetime | None
-    error: str | None
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    error: Optional[str]
 
 
 class SyncResultResponse(BaseModel):
@@ -77,7 +77,7 @@ class SyncResultResponse(BaseModel):
     articles_count: int
     documents_count: int
     errors: list[str]
-    rag_store_name: str | None
+    rag_store_name: Optional[str]
 
 
 # ============================================================================
@@ -221,8 +221,8 @@ async def run_sync_job(
     job_id: str,
     sync_service: SyncService,
     options: SyncOptions,
-    tickets_store: str | None = None,
-    articles_store: str | None = None,
+    tickets_store: Optional[str] = None,
+    articles_store: Optional[str] = None,
 ) -> None:
     """백그라운드 동기화 작업 실행"""
     settings = get_settings()

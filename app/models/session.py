@@ -45,6 +45,7 @@ class ChatRequest(BaseModel):
         validation_alias=AliasChoices("product", "commonProduct"),
     )
     clarification_option: Optional[str] = Field(default=None, alias="clarificationOption")
+    context: Optional[dict] = Field(default=None, description="현재 페이지 컨텍스트 (currentPage, pageContent, instruction)")
 
 
 class ChatResponse(BaseModel):

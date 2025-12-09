@@ -166,6 +166,28 @@ class CommonChatHandler:
         filter_summaries: List[str] = []
         enhanced_query = request.query
 
+        # context 기반 system instruction 생성
+        system_instruction = SYSTEM_INSTRUCTION
+        if request.context:
+            current_page = request.context.get("currentPage", "")
+            page_content = request.context.get("pageContent", "")
+            custom_instruction = request.context.get("instruction", "")
+            
+            if current_page or page_content or custom_instruction:
+                context_parts = []
+                if custom_instruction:
+                    context_parts.append(custom_instruction)
+                if current_page:
+                    context_parts.append(f"현재 사용자가 보고 있는 문서 제목: '{current_page}'")
+                if page_content:
+                    # 너무 길면 잘라냄 (최대 2000자)
+                    truncated_content = page_content[:2000] if len(page_content) > 2000 else page_content
+                    context_parts.append(f"현재 문서 내용:\n{truncated_content}")
+                
+                context_instruction = "\n\n".join(context_parts)
+                system_instruction = f"{SYSTEM_INSTRUCTION}\n\n[현재 페이지 컨텍스트]\n{context_instruction}"
+                LOGGER.info("📄 Context-aware system instruction added for page: %s", current_page)
+
         if request.common_product:
             # 메타데이터 필터: 제품명은 시스템 고정 값이므로 그대로 사용
             metadata_filters.append(MetadataFilter(key="product", value=request.common_product.strip(), operator="EQUALS"))
@@ -185,7 +207,7 @@ class CommonChatHandler:
                 store_names=store_names_to_search,
                 metadata_filters=metadata_filters,
                 conversation_history=history,
-                system_instruction=SYSTEM_INSTRUCTION,
+                system_instruction=system_instruction,
             )
         except GeminiClientError as exc:
             LOGGER.exception("Gemini 검색 실패")
@@ -209,6 +231,28 @@ class CommonChatHandler:
         filter_summaries: List[str] = []
         enhanced_query = request.query
 
+        # context 기반 system instruction 생성
+        system_instruction = SYSTEM_INSTRUCTION
+        if request.context:
+            current_page = request.context.get("currentPage", "")
+            page_content = request.context.get("pageContent", "")
+            custom_instruction = request.context.get("instruction", "")
+            
+            if current_page or page_content or custom_instruction:
+                context_parts = []
+                if custom_instruction:
+                    context_parts.append(custom_instruction)
+                if current_page:
+                    context_parts.append(f"현재 사용자가 보고 있는 문서 제목: '{current_page}'")
+                if page_content:
+                    # 너무 길면 잘라냄 (최대 2000자)
+                    truncated_content = page_content[:2000] if len(page_content) > 2000 else page_content
+                    context_parts.append(f"현재 문서 내용:\n{truncated_content}")
+                
+                context_instruction = "\n\n".join(context_parts)
+                system_instruction = f"{SYSTEM_INSTRUCTION}\n\n[현재 페이지 컨텍스트]\n{context_instruction}"
+                LOGGER.info("📄 Context-aware system instruction added for page: %s", current_page)
+
         if request.common_product:
             # 메타데이터 필터: 제품명은 시스템 고정 값이므로 그대로 사용
             metadata_filters.append(MetadataFilter(key="product", value=request.common_product.strip(), operator="EQUALS"))
@@ -226,7 +270,7 @@ class CommonChatHandler:
                 store_names=store_names_to_search,
                 metadata_filters=metadata_filters,
                 conversation_history=history,
-                system_instruction=SYSTEM_INSTRUCTION,
+                system_instruction=system_instruction,
             ):
                 if event["event"] == "result":
                     payload = event["data"]
