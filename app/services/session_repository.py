@@ -211,11 +211,19 @@ def _build_redis_client(url: str) -> redis.Redis:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Redis 연결 실패: {exc}") from exc
 
 
-@lru_cache
-def get_session_repository() -> SessionRepository:
+_repo_instance: Optional[SessionRepository] = None
+
+
+async def get_session_repository() -> SessionRepository:
+    global _repo_instance
+    if _repo_instance:
+        return _repo_instance
+
     settings = get_settings()
     ttl_seconds = settings.session_ttl_minutes * 60
     if settings.redis_url:
         client = _build_redis_client(settings.redis_url)
-        return RedisSessionRepository(client, settings.redis_session_prefix, ttl_seconds)
-    return InMemorySessionRepository(ttl_seconds)
+        _repo_instance = RedisSessionRepository(client, settings.redis_session_prefix, ttl_seconds)
+    else:
+        _repo_instance = InMemorySessionRepository(ttl_seconds)
+    return _repo_instance

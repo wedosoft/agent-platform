@@ -34,7 +34,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n    \"include_tickets\": true,\n    \"include_articles\": true,\n    \"incremental\": false\n}",
+          "raw": "{\n    \"include_tickets\": true,\n    \"include_articles\": true,\n    \"incremental\": false,\n    \"ticket_since\": \"2025-01-01T00:00:00Z\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -55,7 +55,8 @@
           ]
         },
         "description": "Generated from cURL: \ncurl -X POST \"http://localhost:8000/api/sync/trigger\" \\\n  -H \"Content-Type: application/json\" \\\n  -H \"X-Tenant-ID: wedosoft\" \\\n  -H \"X-Platform: freshdesk\" \\\n  -H \"X-Domain: wedosoft.freshdesk.com\" \\\n  -H \"X-API-Key: YOUR_FRESHDESK_API_KEY\" \\\n  -d '{\n    \"include_tickets\": true,\n    \"include_articles\": true,\n    \"incremental\": false,\n    \"max_concurrency\": 5,\n    \"batch_size\": 10\n  }'"
-      }
+      },
+      "response": []
     },
     {
       "name": "http://localhost:8000/api/sync/status/{job_id}",
@@ -78,7 +79,7 @@
           }
         ],
         "url": {
-          "raw": "http://localhost:8000/api/sync/status/sync_wedosoft_1764218592",
+          "raw": "http://localhost:8000/api/sync/status/sync_wedosoft_1765266041",
           "protocol": "http",
           "host": [
             "localhost"
@@ -88,21 +89,24 @@
             "api",
             "sync",
             "status",
-            "sync_wedosoft_1764218592"
+            "sync_wedosoft_1765266041"
           ]
         },
         "description": "Generated from cURL: \ncurl \"http://localhost:8000/api/sync/status/{job_id}\" \\\n  -H \"X-Tenant-ID: wedosoft\" \\\n  -H \"X-Platform: freshdesk\""
-      }
+      },
+      "response": []
     },
     {
       "name": "New Request",
       "id": "0eb78116-e9e7-4e15-8e11-990037888f68",
       "request": {
         "method": "GET",
+        "header": [],
         "url": {
           "raw": ""
         }
-      }
+      },
+      "response": []
     }
   ]
 }

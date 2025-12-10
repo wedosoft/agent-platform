@@ -1,0 +1,27 @@
+INFO:     Will watch for changes in these directories: ['/Users/alan/GitHub/agent-platform']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [92600] using WatchFiles
+INFO:     Started server process [92604]
+INFO:     Waiting for application startup.
+2025-12-10 17:19:12,063 - apscheduler.scheduler - INFO - Scheduler started
+2025-12-10 17:19:12,063 - app.services.scheduler_service - INFO - 스케줄러 시작됨
+2025-12-10 17:19:12,063 - app.main - INFO - Scheduler started
+2025-12-10 17:19:12,063 - apscheduler.scheduler - DEBUG - Looking for jobs to run
+2025-12-10 17:19:12,063 - apscheduler.scheduler - DEBUG - No jobs; waiting until a job is added
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'app/api/routes/assist.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2025-12-10 17:24:38,909 - app.services.scheduler_service - INFO - 스케줄러 종료됨
+2025-12-10 17:24:38,909 - app.main - INFO - Scheduler stopped
+2025-12-10 17:24:38,909 - apscheduler.scheduler - INFO - Scheduler has been shut down
+INFO:     Application shutdown complete.
+INFO:     Finished server process [92604]
+INFO:     Started server process [99505]
+INFO:     Waiting for application startup.
+2025-12-10 17:24:39,741 - apscheduler.scheduler - INFO - Scheduler started
+2025-12-10 17:24:39,741 - app.services.scheduler_service - INFO - 스케줄러 시작됨
+2025-12-10 17:24:39,741 - app.main - INFO - Scheduler started
+2025-12-10 17:24:39,741 - apscheduler.scheduler - DEBUG - Looking for jobs to run
+2025-12-10 17:24:39,742 - apscheduler.scheduler - DEBUG - No jobs; waiting until a job is added
+INFO:     Application startup complete.

@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any, AsyncGenerator, Dict, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -25,12 +26,15 @@ from app.models.assist import (
     RefineResponse,
     Proposal,
 )
-from app.services.assist_service import AssistService, get_assist_service
+from app.agents.orchestrator import build_graph
+from app.repositories.proposal_repository import ProposalRepository, get_proposal_repository
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/assist", tags=["assist"])
 
+# Initialize Graph
+agent_graph = build_graph()
 
 # =============================================================================
 # SSE Streaming Helper
@@ -41,15 +45,6 @@ async def sse_generator(
 ) -> AsyncGenerator[str, None]:
     """
     이벤트 스트림을 SSE 포맷으로 변환
-
-    Args:
-        events: 이벤트 딕셔너리의 비동기 제너레이터
-
-    Yields:
-        SSE 포맷 문자열
-
-    Format:
-        data: {"type": "event_name", "data": {...}}\n\n
     """
     last_heartbeat = time.time()
 
@@ -57,7 +52,6 @@ async def sse_generator(
         async for event in events:
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
-            # 30초마다 하트비트 전송
             if time.time() - last_heartbeat > 30:
                 heartbeat = {"type": "heartbeat", "timestamp": time.time()}
                 yield f"data: {json.dumps(heartbeat)}\n\n"
@@ -83,95 +77,154 @@ async def analyze_ticket(
     x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
     x_freshdesk_domain: Optional[str] = Header(None, alias="X-Freshdesk-Domain"),
     x_freshdesk_api_key: Optional[str] = Header(None, alias="X-Freshdesk-API-Key"),
-    assist_service: AssistService = Depends(get_assist_service),
+    repo: ProposalRepository = Depends(get_proposal_repository)
 ):
     """
-    티켓 분석 및 AI 제안 생성
-
-    Args:
-        request: 분석 요청 (ticket_id, stream_progress 등)
-        x_tenant_id: 테넌트 ID (헤더)
-        x_freshdesk_domain: Freshdesk 도메인 (FDK에서 전달)
-        x_freshdesk_api_key: Freshdesk API 키 (FDK에서 전달)
-
-    Returns:
-        스트리밍 모드: SSE 이벤트 스트림
-        일반 모드: JSON 응답
-
-    SSE 이벤트:
-        - router_decision: 라우팅 결정
-        - retriever_start: 검색 시작
-        - retriever_results: 검색 결과
-        - resolution_start: 솔루션 생성 시작
-        - resolution_complete: 솔루션 완료
-        - heartbeat: 연결 유지
-        - error: 에러 발생
+    티켓 분석 및 AI 제안 생성 (LangGraph 기반)
     """
-    try:
-        # FDK에서 전달받은 Freshdesk 자격 증명으로 컨텍스트 설정
-        freshdesk_context = None
-        if x_freshdesk_domain and x_freshdesk_api_key:
-            freshdesk_context = {
-                "domain": x_freshdesk_domain,
-                "api_key": x_freshdesk_api_key,
-            }
+    logger.info(f"Analyze request for ticket {request.ticket_id} (Tenant: {x_tenant_id})")
 
-        if request.stream_progress:
-            # SSE 스트리밍 응답
-            events = assist_service.analyze_with_streaming(
-                tenant_id=x_tenant_id,
-                request=request,
-                freshdesk_context=freshdesk_context,
-            )
-            return StreamingResponse(
-                sse_generator(events),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",  # nginx 버퍼링 비활성화
-                },
-            )
-        else:
-            # 일반 JSON 응답
-            proposal = await assist_service.analyze(
-                tenant_id=x_tenant_id,
-                request=request,
-                freshdesk_context=freshdesk_context,
-            )
-            return AnalyzeResponse(proposal=proposal)
+    # Initial State
+    initial_state = {
+        "ticket_context": request.model_dump(by_alias=True),
+        "tenant_config": {
+            "tenant_id": x_tenant_id,
+            "domain": x_freshdesk_domain,
+            "api_key": x_freshdesk_api_key
+        }
+    }
+
+    # --- TEMPORARY: Immediate Mock Response to bypass FDK Timeout ---
+    logger.info("Returning IMMEDIATE MOCK response for testing")
+    mock_proposal = Proposal(
+        id=str(uuid.uuid4()),
+        tenantId=x_tenant_id,
+        ticketId=request.ticket_id,
+        summary="[MOCK] 티켓 분석 테스트 (타임아웃 회피)",
+        intent="technical_issue",
+        sentiment="neutral",
+        draftResponse="안녕하세요. 이것은 타임아웃 문제를 확인하기 위한 테스트 응답입니다. 백엔드 연결은 정상입니다.",
+        fieldUpdates={"priority": 3, "status": 2},
+        reasoning="테스트 목적의 가상 제안입니다.",
+        status="approved"
+    )
+    return AnalyzeResponse(
+        proposal=mock_proposal
+    )
+    # --------------------------------------------------------------
+
+    if request.stream_progress:
+        return StreamingResponse(
+            sse_generator(run_agent_stream(initial_state, repo, x_tenant_id, request.ticket_id)),
+            media_type="text/event-stream"
+        )
+    else:
+        # Sync execution
+        final_state = await agent_graph.ainvoke(initial_state)
+        response = await build_analyze_response(final_state, repo, x_tenant_id, request.ticket_id)
+        return response
+
+async def run_agent_stream(
+    initial_state: Dict[str, Any], 
+    repo: ProposalRepository,
+    tenant_id: str,
+    ticket_id: str
+) -> AsyncGenerator[Dict[str, Any], None]:
+    """Run LangGraph and yield SSE events"""
+    try:
+        final_state = {}
+        async for event in agent_graph.astream(initial_state):
+            for node_name, state_update in event.items():
+                final_state.update(state_update) # Keep track of state
+                
+                yield {
+                    "type": "progress",
+                    "data": {
+                        "stage": node_name,
+                        "message": f"Completed {node_name}..."
+                    }
+                }
+                
+                if node_name == "retrieve" and "search_results" in state_update:
+                    yield {
+                        "type": "search_results",
+                        "data": state_update["search_results"]
+                    }
+                elif node_name == "analyze" and "analysis_result" in state_update:
+                    yield {
+                        "type": "analysis_result",
+                        "data": state_update["analysis_result"]
+                    }
+                elif node_name == "resolve" and "proposed_action" in state_update:
+                    # Save proposal before yielding
+                    proposal_data = state_update["proposed_action"]
+                    proposal_id = str(uuid.uuid4())
+                    proposal_data["id"] = proposal_id
+                    proposal_data["tenantId"] = tenant_id
+                    proposal_data["ticketId"] = ticket_id
+                    
+                    await repo.save_proposal(proposal_id, proposal_data)
+                    
+                    yield {
+                        "type": "proposal",
+                        "data": proposal_data
+                    }
+
+        yield {"type": "complete", "data": {"status": "done"}}
 
     except Exception as e:
-        logger.error(f"분석 오류: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"분석 실패: {str(e)}",
-        )
+        logger.error(f"Agent execution failed: {e}")
+        yield {"type": "error", "message": str(e)}
 
+async def build_analyze_response(
+    state: Dict[str, Any],
+    repo: ProposalRepository,
+    tenant_id: str,
+    ticket_id: str
+) -> Dict[str, Any]:
+    """Build JSON response from final state"""
+    proposal = state.get("proposed_action", {})
+    analysis = state.get("analysis_result", {})
+    search = state.get("search_results", {})
+    
+    if proposal:
+        proposal_id = str(uuid.uuid4())
+        proposal["id"] = proposal_id
+        proposal["tenantId"] = tenant_id
+        proposal["ticketId"] = ticket_id
+        await repo.save_proposal(proposal_id, proposal)
+    
+    return {
+        "proposal": proposal,
+        "analysis": analysis,
+        "search": search
+    }
 
 @router.post("/approve", response_model=ApproveResponse)
 async def approve_proposal(
     request: ApproveRequest,
     x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
-    assist_service: AssistService = Depends(get_assist_service),
+    repo: ProposalRepository = Depends(get_proposal_repository),
 ):
     """
     제안 승인 또는 거절
-
-    Args:
-        request: 승인 요청 (proposal_id, action 등)
-        x_tenant_id: 테넌트 ID
-
-    Returns:
-        승인된 경우: field_updates, final_response
-        거절된 경우: reason
     """
     try:
-        result = await assist_service.approve(
-            tenant_id=x_tenant_id,
-            request=request,
+        proposal = await repo.get_proposal(request.proposal_id)
+        if not proposal:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+            
+        # Logic to handle approval (e.g., update Freshdesk, log to Supabase)
+        # For MVP, we just return success
+        
+        status_str = "approved" if request.action == "approve" else "rejected"
+        
+        return ApproveResponse(
+            status=status_str,
+            field_updates=proposal.get("field_updates"),
+            final_response=request.final_response or proposal.get("draft_response"),
+            reason=request.rejection_reason
         )
-        return ApproveResponse(**result)
 
     except HTTPException:
         raise
@@ -182,29 +235,40 @@ async def approve_proposal(
             detail=str(e),
         )
 
-
 @router.post("/refine", response_model=RefineResponse)
 async def refine_proposal(
     request: RefineRequest,
     x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
-    assist_service: AssistService = Depends(get_assist_service),
+    repo: ProposalRepository = Depends(get_proposal_repository),
 ):
     """
     제안 수정 요청
-
-    Args:
-        request: 수정 요청 (proposal_id, refinement_request 등)
-        x_tenant_id: 테넌트 ID
-
-    Returns:
-        새로운 버전의 제안
     """
     try:
-        result = await assist_service.refine(
-            tenant_id=x_tenant_id,
-            request=request,
+        proposal = await repo.get_proposal(request.proposal_id)
+        if not proposal:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+            
+        # Logic to refine proposal using LLM (not implemented in this MVP step)
+        # We would call the Resolver agent again with feedback
+        
+        # Create a new proposal object based on the old one but with incremented version
+        new_version = proposal.get("proposal_version", 1) + 1
+        
+        refined_proposal = Proposal(
+            id=request.proposal_id,
+            tenantId=x_tenant_id,
+            ticketId=request.ticket_id,
+            proposalVersion=new_version,
+            draftResponse=proposal.get("draft_response") or "", # In real logic, this would be refined
+            fieldUpdates=proposal.get("field_updates"),
+            reasoning="Refinement placeholder"
         )
-        return RefineResponse(**result)
+        
+        return RefineResponse(
+            proposal=refined_proposal,
+            version=new_version
+        )
 
     except HTTPException:
         raise
@@ -215,28 +279,17 @@ async def refine_proposal(
             detail=str(e),
         )
 
-
 @router.get("/status/{proposal_id}")
 async def get_proposal_status(
     proposal_id: str,
     x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
-    assist_service: AssistService = Depends(get_assist_service),
+    repo: ProposalRepository = Depends(get_proposal_repository),
 ):
     """
     제안 상태 조회
-
-    Args:
-        proposal_id: 제안 ID
-        x_tenant_id: 테넌트 ID
-
-    Returns:
-        제안 상세 정보
     """
     try:
-        proposal = await assist_service.get_proposal(
-            tenant_id=x_tenant_id,
-            proposal_id=proposal_id,
-        )
+        proposal = await repo.get_proposal(proposal_id)
         if not proposal:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

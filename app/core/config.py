@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import List, Optional
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     pipeline_base_url: str = "http://localhost:4000/pipeline"
     redis_url: Optional[str] = None
     redis_session_prefix: str = "agent-platform-session"
+    
+    # Upstash Redis
+    upstash_redis_rest_url: Optional[str] = None
+    upstash_redis_rest_token: Optional[str] = None
 
     # Admin API
     admin_api_key: Optional[str] = None
@@ -49,6 +53,11 @@ class Settings(BaseSettings):
     freshdesk_domain: Optional[str] = None
     freshdesk_api_key: Optional[str] = None
 
+    # LLM Provider (deepseek or openai)
+    llm_provider: str = Field(default="deepseek")
+    deepseek_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = Field(None, alias="OPEN_API_KEY")
+
     # Multi-tenant config (JSON or file path)
     tenant_config: Optional[str] = None
     tenant_config_path: Optional[str] = None
@@ -68,6 +77,14 @@ class Settings(BaseSettings):
         if value is None:
             return ["ko", "en"]
         return value
+
+    @model_validator(mode='after')
+    def compute_redis_url(self) -> Settings:
+        if not self.redis_url and self.upstash_redis_rest_url and self.upstash_redis_rest_token:
+            # Convert https://fly-agent-platform-redis.upstash.io:6379 to redis://default:token@fly-agent-platform-redis.upstash.io:6379
+            url = self.upstash_redis_rest_url.replace("http://", "").replace("https://", "")
+            self.redis_url = f"redis://default:{self.upstash_redis_rest_token}@{url}"
+        return self
 
 
 @lru_cache
