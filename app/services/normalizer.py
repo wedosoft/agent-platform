@@ -69,6 +69,7 @@ class NormalizerCache:
     contacts: dict[int, str] = field(default_factory=dict)
     agents: dict[int, str] = field(default_factory=dict)
     groups: dict[int, str] = field(default_factory=dict)
+    products: dict[int, str] = field(default_factory=dict)
     categories: dict[int, str] = field(default_factory=dict)
     folders: dict[int, str] = field(default_factory=dict)
 
@@ -99,6 +100,8 @@ class NormalizedTicket:
     responder_id: int | None
     group: str | None
     group_id: int | None
+    product: str | None
+    product_id: int | None
     tags: list[str]
     created_at: str
     updated_at: str
@@ -195,6 +198,13 @@ class FreshdeskNormalizer:
             if group.get("id"):
                 self._cache.groups[group["id"]] = group.get("name", "")
         logger.debug(f"Loaded {len(groups)} groups into cache")
+    
+    def load_products(self, products: list[dict[str, Any]]) -> None:
+        """제품 캐시 로드"""
+        for product in products:
+            if product.get("id"):
+                self._cache.products[product["id"]] = product.get("name", "")
+        logger.debug(f"Loaded {len(products)} products into cache")
     
     def load_categories(self, categories: list[dict[str, Any]]) -> None:
         """카테고리 캐시 로드"""
@@ -365,6 +375,16 @@ class FreshdeskNormalizer:
                 or f"Group_{group_id}"
             )
         
+        # Product label
+        product_id = ticket.get("product_id")
+        product_label = None
+        if product_id:
+            product_label = (
+                ticket.get("product_label")
+                or self._cache.products.get(product_id, "")
+                or f"Product_{product_id}"
+            )
+        
         # Normalize conversations
         normalized_conversations = None
         if conversations:
@@ -387,6 +407,8 @@ class FreshdeskNormalizer:
             responder_id=responder_id,
             group=group_label,
             group_id=group_id,
+            product=product_label,
+            product_id=product_id,
             tags=ticket.get("tags") or [],
             created_at=ticket.get("created_at", ""),
             updated_at=ticket.get("updated_at", ""),

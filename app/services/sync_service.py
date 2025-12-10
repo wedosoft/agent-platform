@@ -225,16 +225,22 @@ class SyncService:
                 if not article_since and self._last_article_sync:
                     article_since = self._last_article_sync
             
-            # Sync tickets
-            if opts.include_tickets:
-                # Use batch processing if upload_callback is provided
+            # Run sync tasks in parallel
+            tasks = []
+            
+            # 1. Ticket Sync Task
+            async def run_ticket_sync():
+                if not opts.include_tickets:
+                    return 0
+                
                 if upload_callback:
-                    ticket_count = await self._sync_tickets_batch(
+                    count = await self._sync_tickets_batch(
                         upload_callback=upload_callback,
                         since=ticket_since,
                         concurrency=opts.max_concurrency,
                     )
-                    result.tickets_count = ticket_count
+                    self._last_ticket_sync = datetime.now()
+                    return count
                 else:
                     # Legacy mode (collect all)
                     ticket_docs = await self._sync_tickets(
@@ -242,20 +248,37 @@ class SyncService:
                         concurrency=opts.max_concurrency,
                     )
                     all_documents.extend(ticket_docs)
-                    result.tickets_count = len(ticket_docs)
+                    self._last_ticket_sync = datetime.now()
+                    return len(ticket_docs)
+
+            # 2. Article Sync Task
+            async def run_article_sync():
+                if not opts.include_articles:
+                    return 0
                 
-                self._last_ticket_sync = datetime.now()
-            
-            # Sync articles
-            if opts.include_articles:
                 article_docs = await self._sync_articles(since=article_since)
-                all_documents.extend(article_docs)
-                result.articles_count = len(article_docs)
+                
+                if upload_callback and article_docs:
+                    await self._upload_documents(
+                        article_docs,
+                        upload_callback,
+                        batch_size=opts.upload_batch_size,
+                    )
+                else:
+                    all_documents.extend(article_docs)
+                
                 self._last_article_sync = datetime.now()
+                return len(article_docs)
+
+            # Execute both in parallel
+            self._progress.phase = "syncing"
+            results = await asyncio.gather(run_ticket_sync(), run_article_sync())
             
+            result.tickets_count = results[0]
+            result.articles_count = results[1]
             result.documents_count = result.tickets_count + result.articles_count
             
-            # Upload remaining documents (articles or legacy tickets)
+            # Upload remaining documents (only for legacy mode where upload_callback wasn't used inside tasks)
             if upload_callback and all_documents:
                 await self._upload_documents(
                     all_documents,
@@ -346,6 +369,8 @@ class SyncService:
             # Update progress
             self._progress.tickets_processed += len(batch_records)
             self._progress.tickets_total = self._progress.tickets_processed # Estimate total as we go
+            
+            logger.info(f"Sync progress: {self._progress.tickets_processed} tickets processed so far")
             
             # Flush metadata periodically (optional, but good for safety)
             # For now, we keep metadata in memory until end or implement batch flush

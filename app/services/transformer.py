@@ -117,6 +117,12 @@ class DataTransformer:
         if ticket.group_id is not None:
             metadata["group_id"] = str(ticket.group_id)
         
+        # Product field (optional)
+        if ticket.product and not self.PLACEHOLDER_PATTERN.match(ticket.product):
+            metadata["product"] = ticket.product
+        if ticket.product_id is not None:
+            metadata["product_id"] = str(ticket.product_id)
+        
         # Type field (optional)
         if ticket.type:
             metadata["type"] = ticket.type
@@ -199,6 +205,9 @@ class DataTransformer:
         
         if ticket.type:
             parts.append(f"Type: {ticket.type}")
+        
+        if ticket.product:
+            parts.append(f"Product: {ticket.product}")
         
         parts.append(f"Requester: {ticket.requester}")
         

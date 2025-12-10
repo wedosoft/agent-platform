@@ -193,10 +193,21 @@ async def upload_document_to_store(
                     "displayName": result.get("displayName", file_name),
                 }
         except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.RequestError) as e:
+            # 400 Bad Request는 재시도해도 성공할 수 없으므로 즉시 실패 처리
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 400:
+                print(f"[ERROR] Upload failed with 400 Bad Request (Non-retriable): {e}")
+                raise e
+
             last_error = e
             if attempt < max_retries - 1:
                 wait_time = (attempt + 1) * 2  # 2초, 4초, 6초
-                print(f"[RETRY] Upload failed (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s: {e}")
+                
+                # 503 Service Unavailable 명시적 로깅
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 503:
+                    print(f"[RETRY] Google API 503 Service Unavailable (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s...")
+                else:
+                    print(f"[RETRY] Upload failed (attempt {attempt + 1}/{max_retries}), retrying in {wait_time}s: {e}")
+                
                 await asyncio.sleep(wait_time)
             else:
                 print(f"[ERROR] Upload failed after {max_retries} attempts: {e}")

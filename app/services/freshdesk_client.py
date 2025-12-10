@@ -542,6 +542,13 @@ class FreshdeskClient:
                 
                 # 다른 에러
                 if response.status_code >= 400:
+                    # 502 Bad Gateway, 503 Service Unavailable 등 일시적인 서버 오류는 재시도
+                    if response.status_code in [502, 503]:
+                        logger.warning(f"Freshdesk {response.status_code} Server Error (attempt {attempt + 1}/{max_attempts}), retrying...")
+                        if attempt < max_attempts - 1:
+                            await asyncio.sleep(2.0 * (attempt + 1))
+                            continue
+                    
                     raise FreshdeskClientError(
                         f"Freshdesk API {method} {path} failed: {response.status_code} {response.text}"
                     )

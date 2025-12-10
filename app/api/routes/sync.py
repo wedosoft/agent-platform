@@ -236,38 +236,63 @@ async def run_sync_job(
         
         # Upload callback - 문서를 적절한 Gemini 스토어에 업로드
         async def upload_to_gemini(documents: list[GeminiDocument]) -> None:
-            """Gemini File Search 스토어에 문서 업로드"""
-            for doc in documents:
-                # 문서 타입에 따라 스토어 선택
-                doc_type = doc.type  # "ticket" or "article"
-                
-                if doc_type == "article":
-                    store_name = articles_store_name
-                else:
-                    store_name = tickets_store_name
-                
-                if not store_name:
-                    logger.warning(f"No store configured for type '{doc_type}', skipping document: {doc.title}")
-                    continue
-                
-                # 메타데이터를 Gemini 형식으로 변환
-                metadata = []
-                if doc.metadata:
-                    for key, value in doc.metadata.items():
-                        if value is not None:
-                            metadata.append({"key": key, "value": str(value)})
-                
-                try:
-                    await upload_document_to_store(
-                        store_name=store_name,
-                        file_name=doc.title,
-                        file_content=doc.content.encode("utf-8"),
-                        metadata=metadata,
-                    )
-                    logger.debug(f"Uploaded document: {doc.title} to {store_name}")
-                except Exception as e:
-                    logger.error(f"Failed to upload document {doc.title}: {e}")
-                    raise
+            """Gemini File Search 스토어에 문서 업로드 (병렬 처리)"""
+            
+            # 동시 업로드 제한 (Rate Limit 방지) - 20개로 증량
+            sem = asyncio.Semaphore(20)
+
+            async def upload_single(doc: GeminiDocument):
+                async with sem:
+                    # 문서 타입에 따라 스토어 선택
+                    doc_type = doc.type  # "ticket" or "article"
+                    
+                    if doc_type == "article":
+                        store_name = articles_store_name
+                    else:
+                        store_name = tickets_store_name
+                    
+                    if not store_name:
+                        logger.warning(f"No store configured for type '{doc_type}', skipping document: {doc.title}")
+                        return
+                    
+                    # 메타데이터를 Gemini 형식으로 변환
+                    metadata = []
+                    if doc.metadata:
+                        for key, value in doc.metadata.items():
+                            if value is not None:
+                                # custom_fields는 개별 필드로 풀어서 저장 (Flatten)
+                                if key == "custom_fields" and isinstance(value, dict):
+                                    for cf_key, cf_value in value.items():
+                                        if cf_value is not None:
+                                            str_cf_value = str(cf_value)
+                                            # Gemini 메타데이터 값 길이 제한 (안전하게 100자)
+                                            if len(str_cf_value) > 100:
+                                                str_cf_value = str_cf_value[:97] + "..."
+                                            metadata.append({"key": cf_key, "value": str_cf_value})
+                                    continue
+
+                                # 일반 메타데이터 처리
+                                # Gemini 메타데이터 값 길이 제한 (256자 -> 안전하게 100자로 제한)
+                                str_value = str(value)
+                                if len(str_value) > 100:
+                                    str_value = str_value[:97] + "..."
+                                
+                                metadata.append({"key": key, "value": str_value})
+                    
+                    try:
+                        await upload_document_to_store(
+                            store_name=store_name,
+                            file_name=doc.title,
+                            file_content=doc.content.encode("utf-8"),
+                            metadata=metadata,
+                        )
+                        logger.debug(f"Uploaded document: {doc.title} to {store_name}")
+                    except Exception as e:
+                        logger.error(f"Failed to upload document {doc.title}: {e}")
+                        # 개별 문서 실패는 무시하고 계속 진행 (전체 중단 방지)
+
+            # Run all uploads in parallel
+            await asyncio.gather(*[upload_single(doc) for doc in documents])
         
         # Run sync with upload callback
         result = await sync_service.sync(

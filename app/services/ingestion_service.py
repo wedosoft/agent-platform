@@ -129,7 +129,8 @@ class FreshdeskIngestionService:
         include_conversations: Optional[bool] = None,
         conversation_concurrency: Optional[int] = None,
         per_page: Optional[int] = None,
-        include_fields: Optional[List[str]] = None
+        include_fields: Optional[List[str]] = None,
+        page_concurrency: int = 5  # 페이지 병렬 수집 개수 (기본 5페이지)
     ) -> AsyncGenerator[List[TicketIngestionRecord], None]:
         """
         티켓 + 대화 수집 (제너레이터 방식 - 배치 처리용)
@@ -147,38 +148,82 @@ class FreshdeskIngestionService:
         if self.options.include_description and "description" not in _include_fields:
             _include_fields.append("description")
         
-        logger.info(f"Fetching tickets generator (since={since}, concurrency={_concurrency})")
+        logger.info(f"Fetching tickets generator (since={since}, concurrency={_concurrency}, page_concurrency={page_concurrency})")
         
         page = 1
         while True:
-            # 1. 페이지 단위 티켓 수집
-            tickets = await self.client.get_tickets(
-                page=page,
-                per_page=_per_page,
-                updated_since=since,
-                include_fields=_include_fields or None,
-            )
+            # 페이지 병렬 수집 (Batch Fetching)
+            logger.info(f"Fetching tickets pages {page} to {page + page_concurrency - 1}...")
             
-            if not tickets:
+            tasks = []
+            for i in range(page_concurrency):
+                tasks.append(self.client.get_tickets(
+                    page=page + i,
+                    per_page=_per_page,
+                    updated_since=since,
+                    include_fields=_include_fields or None,
+                ))
+            
+            # 결과 대기 (예외 발생 시 중단하지 않고 개별 처리)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            should_stop = False
+            valid_pages_data = [] # (page_index, tickets)
+            
+            # 1. 결과 확인 및 유효한 페이지 수집
+            for i, result in enumerate(results):
+                current_page = page + i
+                
+                if isinstance(result, Exception):
+                    logger.error(f"Failed to fetch page {current_page}: {result}")
+                    # 중간 페이지 실패 시 일단 진행 (다음 페이지가 있을 수 있음)
+                    continue
+                
+                tickets = result
+                if not tickets:
+                    # 빈 페이지가 나오면 이후 페이지도 없을 것이므로 중단 플래그 설정
+                    should_stop = True
+                    # 하지만 이전 페이지(i-1)까지는 유효할 수 있으므로 break하지 않고
+                    # 현재 페이지가 빈 페이지임을 표시
+                    continue
+                
+                logger.info(f"Fetched page {current_page}: {len(tickets)} tickets")
+                valid_pages_data.append((current_page, tickets))
+                
+                # 페이지가 꽉 차지 않았으면 마지막 페이지임
+                if len(tickets) < _per_page:
+                    should_stop = True
+
+            if not valid_pages_data:
                 break
-            
-            logger.info(f"Fetched page {page}: {len(tickets)} tickets")
-            
-            # 2. 대화 병렬 첨부
+
+            # 2. 대화 병렬 첨부 (모든 페이지 동시에)
+            # 기존에는 페이지별로 순차적으로 대화를 첨부했으나, 이를 병렬화하여 속도 향상
             if _include_conversations:
-                records = await self._attach_conversations(tickets, _concurrency)
+                logger.info(f"Attaching conversations for {len(valid_pages_data)} pages in parallel...")
+                attach_tasks = []
+                for _, tickets in valid_pages_data:
+                    attach_tasks.append(self._attach_conversations(tickets, _concurrency))
+                
+                # 모든 페이지의 대화 첨부가 끝날 때까지 대기
+                pages_with_conversations = await asyncio.gather(*attach_tasks)
             else:
-                records = [
-                    TicketIngestionRecord(ticket=t, conversations=[]) 
-                    for t in tickets
-                ]
+                pages_with_conversations = []
+                for _, tickets in valid_pages_data:
+                    records = [
+                        TicketIngestionRecord(ticket=t, conversations=[]) 
+                        for t in tickets
+                    ]
+                    pages_with_conversations.append(records)
+
+            # 3. 결과 Yield (순서대로)
+            for records in pages_with_conversations:
+                yield records
             
-            yield records
-            
-            if len(tickets) < _per_page:
+            if should_stop:
                 break
                 
-            page += 1
+            page += page_concurrency
     
     async def fetch_articles(
         self,

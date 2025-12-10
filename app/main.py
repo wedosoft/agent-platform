@@ -20,6 +20,10 @@ logging.basicConfig(
 )
 logging.getLogger("app").setLevel(settings.log_level)
 
+# Silence noisy libraries
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

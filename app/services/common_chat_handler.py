@@ -172,21 +172,68 @@ class CommonChatHandler:
             current_page = request.context.get("currentPage", "")
             page_content = request.context.get("pageContent", "")
             custom_instruction = request.context.get("instruction", "")
+            ticket_data = request.context.get("ticket")
             
-            if current_page or page_content or custom_instruction:
-                context_parts = []
-                if custom_instruction:
-                    context_parts.append(custom_instruction)
-                if current_page:
-                    context_parts.append(f"현재 사용자가 보고 있는 문서 제목: '{current_page}'")
-                if page_content:
-                    # 너무 길면 잘라냄 (최대 2000자)
-                    truncated_content = page_content[:2000] if len(page_content) > 2000 else page_content
-                    context_parts.append(f"현재 문서 내용:\n{truncated_content}")
+            context_parts = []
+            
+            if custom_instruction:
+                context_parts.append(custom_instruction)
+            if current_page:
+                context_parts.append(f"현재 사용자가 보고 있는 문서 제목: '{current_page}'")
+            if page_content:
+                # 너무 길면 잘라냄 (최대 2000자)
+                truncated_content = page_content[:2000] if len(page_content) > 2000 else page_content
+                context_parts.append(f"현재 문서 내용:\n{truncated_content}")
+            
+            if ticket_data:
+                ticket = ticket_data
+                # If it's wrapped in "ticket" key
+                if "ticket" in ticket_data and isinstance(ticket_data["ticket"], dict):
+                    ticket = ticket_data["ticket"]
                 
+                conversations = ticket.get("conversations", [])
+                
+                ticket_parts = []
+                ticket_parts.append(f"--- 현재 티켓 정보 (ID: {ticket.get('id')}) ---")
+                ticket_parts.append(f"제목: {ticket.get('subject')}")
+                ticket_parts.append(f"내용: {ticket.get('description_text')}")
+                
+                if conversations:
+                    # 시간순 정렬 (오래된 순)
+                    try:
+                        conversations.sort(key=lambda x: x.get("created_at", ""))
+                    except Exception:
+                        pass # 정렬 실패시 원본 순서 유지
+
+                    ticket_parts.append("\n--- 대화 내역 (시간순) ---")
+                    for conv in conversations:
+                        is_incoming = conv.get("incoming", False)
+                        is_private = conv.get("private", False)
+                        created_at = conv.get("created_at", "")
+                        
+                        role = "고객"
+                        if not is_incoming:
+                            role = "상담원"
+                            if is_private:
+                                role = "내부 메모 (상담원)"
+                        
+                        body = conv.get("body_text", "").strip()
+                        if body:
+                            # 타임스탬프 포함하여 맥락 제공
+                            timestamp_str = f"[{created_at}] " if created_at else ""
+                            ticket_parts.append(f"{timestamp_str}[{role}]: {body}")
+                
+                context_parts.append("\n".join(ticket_parts))
+                LOGGER.info("🎫 Ticket context added for ticket: %s (%d conversations)", ticket.get('id'), len(conversations))
+
+            if context_parts:
                 context_instruction = "\n\n".join(context_parts)
-                system_instruction = f"{SYSTEM_INSTRUCTION}\n\n[현재 페이지 컨텍스트]\n{context_instruction}"
-                LOGGER.info("📄 Context-aware system instruction added for page: %s", current_page)
+                system_instruction = f"{SYSTEM_INSTRUCTION}\n\n[현재 컨텍스트]\n{context_instruction}"
+                LOGGER.info("📄 Context-aware system instruction added. Length: %d chars", len(system_instruction))
+                
+                # 너무 긴 경우 경고 (예: 100,000자 이상)
+                if len(system_instruction) > 100000:
+                    LOGGER.warning("⚠️ System instruction is very long (%d chars). Model might struggle.", len(system_instruction))
 
         if request.common_product:
             # 메타데이터 필터: 제품명은 시스템 고정 값이므로 그대로 사용
@@ -237,21 +284,68 @@ class CommonChatHandler:
             current_page = request.context.get("currentPage", "")
             page_content = request.context.get("pageContent", "")
             custom_instruction = request.context.get("instruction", "")
+            ticket_data = request.context.get("ticket")
             
-            if current_page or page_content or custom_instruction:
-                context_parts = []
-                if custom_instruction:
-                    context_parts.append(custom_instruction)
-                if current_page:
-                    context_parts.append(f"현재 사용자가 보고 있는 문서 제목: '{current_page}'")
-                if page_content:
-                    # 너무 길면 잘라냄 (최대 2000자)
-                    truncated_content = page_content[:2000] if len(page_content) > 2000 else page_content
-                    context_parts.append(f"현재 문서 내용:\n{truncated_content}")
+            context_parts = []
+            
+            if custom_instruction:
+                context_parts.append(custom_instruction)
+            if current_page:
+                context_parts.append(f"현재 사용자가 보고 있는 문서 제목: '{current_page}'")
+            if page_content:
+                # 너무 길면 잘라냄 (최대 2000자)
+                truncated_content = page_content[:2000] if len(page_content) > 2000 else page_content
+                context_parts.append(f"현재 문서 내용:\n{truncated_content}")
+            
+            if ticket_data:
+                ticket = ticket_data
+                # If it's wrapped in "ticket" key
+                if "ticket" in ticket_data and isinstance(ticket_data["ticket"], dict):
+                    ticket = ticket_data["ticket"]
                 
+                conversations = ticket.get("conversations", [])
+                
+                ticket_parts = []
+                ticket_parts.append(f"--- 현재 티켓 정보 (ID: {ticket.get('id')}) ---")
+                ticket_parts.append(f"제목: {ticket.get('subject')}")
+                ticket_parts.append(f"내용: {ticket.get('description_text')}")
+                
+                if conversations:
+                    # 시간순 정렬 (오래된 순)
+                    try:
+                        conversations.sort(key=lambda x: x.get("created_at", ""))
+                    except Exception:
+                        pass # 정렬 실패시 원본 순서 유지
+
+                    ticket_parts.append("\n--- 대화 내역 (시간순) ---")
+                    for conv in conversations:
+                        is_incoming = conv.get("incoming", False)
+                        is_private = conv.get("private", False)
+                        created_at = conv.get("created_at", "")
+                        
+                        role = "고객"
+                        if not is_incoming:
+                            role = "상담원"
+                            if is_private:
+                                role = "내부 메모 (상담원)"
+                        
+                        body = conv.get("body_text", "").strip()
+                        if body:
+                            # 타임스탬프 포함하여 맥락 제공
+                            timestamp_str = f"[{created_at}] " if created_at else ""
+                            ticket_parts.append(f"{timestamp_str}[{role}]: {body}")
+                
+                context_parts.append("\n".join(ticket_parts))
+                LOGGER.info("🎫 Ticket context added for ticket: %s (%d conversations)", ticket.get('id'), len(conversations))
+
+            if context_parts:
                 context_instruction = "\n\n".join(context_parts)
-                system_instruction = f"{SYSTEM_INSTRUCTION}\n\n[현재 페이지 컨텍스트]\n{context_instruction}"
-                LOGGER.info("📄 Context-aware system instruction added for page: %s", current_page)
+                system_instruction = f"{SYSTEM_INSTRUCTION}\n\n[현재 컨텍스트]\n{context_instruction}"
+                LOGGER.info("📄 Context-aware system instruction added. Length: %d chars", len(system_instruction))
+                
+                # 너무 긴 경우 경고 (예: 100,000자 이상)
+                if len(system_instruction) > 100000:
+                    LOGGER.warning("⚠️ System instruction is very long (%d chars). Model might struggle.", len(system_instruction))
 
         if request.common_product:
             # 메타데이터 필터: 제품명은 시스템 고정 값이므로 그대로 사용

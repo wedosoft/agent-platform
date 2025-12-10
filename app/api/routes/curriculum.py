@@ -444,15 +444,24 @@ async def stream_module_chat(
 # 퀴즈 문제 조회 (자가 점검용)
 # ============================================
 
-async def _generate_quiz_questions(module_id: UUID, module_name: str, module_desc: str = "") -> List[QuizQuestion]:
+async def _generate_quiz_questions(module_id: UUID, module_name: str, module_desc: str = "", module_content: str = "") -> List[QuizQuestion]:
     """Gemini를 사용하여 퀴즈 문제 생성 및 DB 저장."""
     try:
         client = get_gemini_client()
+        
+        # 컨텍스트가 너무 길면 잘라냄 (토큰 제한 고려)
+        context_text = module_content[:10000] if module_content else "No specific content provided."
+        
         prompt = f"""
         Topic: {module_name}
         Description: {module_desc or module_name}
         
-        Generate 3 multiple-choice quiz questions to check understanding of this topic.
+        Reference Content:
+        {context_text}
+        
+        Based on the Reference Content above, generate 3 multiple-choice quiz questions to check understanding of this topic.
+        If the content is insufficient, use general knowledge about '{module_name}'.
+        
         Target audience: New employees learning the system.
         Language: Korean.
         
@@ -555,16 +564,31 @@ async def get_questions(
         
         module_name = "Onboarding Knowledge"
         module_desc = ""
+        module_content = ""
         
         try:
+            # 모듈 정보 조회
             module = await repo.get_module_by_id(module_id)
             if module:
                 module_name = module.nameKo
                 module_desc = module.description
+            
+            # 모듈 콘텐츠(섹션) 조회하여 컨텍스트 구성
+            try:
+                contents_resp = await repo.get_module_contents(module_id)
+                content_parts = []
+                for level, sections in contents_resp.sections.items():
+                    for section in sections:
+                        if section.content_md:
+                            content_parts.append(f"--- Section: {section.title_ko} ---\n{section.content_md}")
+                module_content = "\n\n".join(content_parts)
+            except Exception as e:
+                logger.warning(f"Failed to get module contents for context: {e}")
+                
         except Exception:
             logger.warning(f"Failed to get module info for {module_id}, using default topic.")
             
-        questions = await _generate_quiz_questions(module_id, module_name, module_desc)
+        questions = await _generate_quiz_questions(module_id, module_name, module_desc, module_content)
             
     return questions
 
