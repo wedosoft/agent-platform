@@ -30,6 +30,11 @@ async def propose_solution(state: AgentState) -> AgentState:
             analysis_result
         )
         
+        # Merge field_proposals from analysis if not present in proposal
+        # This ensures the detailed field reasoning from Analyzer is preserved
+        if "field_proposals" not in proposal and "field_proposals" in analysis_result:
+            proposal["field_proposals"] = analysis_result["field_proposals"]
+        
         state["proposed_action"] = proposal
         logger.info("Solution proposed")
         

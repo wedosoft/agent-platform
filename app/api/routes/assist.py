@@ -14,7 +14,7 @@ import time
 import uuid
 from typing import Any, AsyncGenerator, Dict, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status, BackgroundTasks
 from fastapi.responses import StreamingResponse
 
 from app.models.assist import (
@@ -67,6 +67,53 @@ async def sse_generator(
         yield f"data: {json.dumps(error_event)}\n\n"
 
 
+async def process_analysis_background(
+    initial_state: Dict[str, Any],
+    repo: ProposalRepository,
+    tenant_id: str,
+    ticket_id: str,
+    proposal_id: str
+):
+    """Background task for analysis"""
+    try:
+        logger.info(f"Starting background analysis for proposal {proposal_id}")
+        final_state = await agent_graph.ainvoke(initial_state)
+        
+        # Extract results
+        proposal_data = final_state.get("proposed_action", {})
+        analysis = final_state.get("analysis_result", {})
+        search = final_state.get("search_results", {})
+        
+        # Update proposal with results
+        proposal_data["id"] = proposal_id
+        proposal_data["tenantId"] = tenant_id
+        proposal_data["ticketId"] = ticket_id
+        proposal_data["status"] = "draft" # Completed
+        
+        # Merge analysis/search into proposal if needed or just save as is
+        # The Proposal model has fields for these? No, but we can store them in the repo
+        # Actually, Proposal model has similar_cases etc.
+        
+        # Ensure we have a valid Proposal object structure
+        # We need to map the dict to the model fields if they differ, but they should match mostly
+        
+        # Save completed proposal
+        await repo.save_proposal(proposal_id, proposal_data)
+        logger.info(f"Background analysis completed for proposal {proposal_id}")
+        
+    except Exception as e:
+        logger.error(f"Background analysis failed: {e}")
+        # Update status to error
+        error_proposal = {
+            "id": proposal_id,
+            "tenantId": tenant_id,
+            "ticketId": ticket_id,
+            "status": "error",
+            "rejectionReason": str(e)
+        }
+        await repo.save_proposal(proposal_id, error_proposal)
+
+
 # =============================================================================
 # Routes
 # =============================================================================
@@ -74,6 +121,7 @@ async def sse_generator(
 @router.post("/analyze")
 async def analyze_ticket(
     request: AnalyzeRequest,
+    background_tasks: BackgroundTasks,
     x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
     x_freshdesk_domain: Optional[str] = Header(None, alias="X-Freshdesk-Domain"),
     x_freshdesk_api_key: Optional[str] = Header(None, alias="X-Freshdesk-API-Key"),
@@ -94,24 +142,29 @@ async def analyze_ticket(
         }
     }
 
-    # --- TEMPORARY: Immediate Mock Response to bypass FDK Timeout ---
-    logger.info("Returning IMMEDIATE MOCK response for testing")
-    mock_proposal = Proposal(
-        id=str(uuid.uuid4()),
-        tenantId=x_tenant_id,
-        ticketId=request.ticket_id,
-        summary="[MOCK] 티켓 분석 테스트 (타임아웃 회피)",
-        intent="technical_issue",
-        sentiment="neutral",
-        draftResponse="안녕하세요. 이것은 타임아웃 문제를 확인하기 위한 테스트 응답입니다. 백엔드 연결은 정상입니다.",
-        fieldUpdates={"priority": 3, "status": 2},
-        reasoning="테스트 목적의 가상 제안입니다.",
-        status="approved"
-    )
-    return AnalyzeResponse(
-        proposal=mock_proposal
-    )
-    # --------------------------------------------------------------
+    if request.async_mode:
+        # Create a placeholder proposal
+        proposal_id = str(uuid.uuid4())
+        initial_proposal = Proposal(
+            id=proposal_id,
+            tenantId=x_tenant_id,
+            ticketId=request.ticket_id,
+            status="processing",
+            draftResponse="" # Optional now
+        )
+        await repo.save_proposal(proposal_id, initial_proposal.model_dump(by_alias=True))
+        
+        # Start background task
+        background_tasks.add_task(
+            process_analysis_background,
+            initial_state,
+            repo,
+            x_tenant_id,
+            request.ticket_id,
+            proposal_id
+        )
+        
+        return AnalyzeResponse(proposal=initial_proposal)
 
     if request.stream_progress:
         return StreamingResponse(

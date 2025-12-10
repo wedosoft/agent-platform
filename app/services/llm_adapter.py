@@ -61,16 +61,39 @@ class LLMAdapter:
             raise
 
     async def analyze_ticket(self, ticket_context: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze ticket for intent, sentiment, and summary"""
-        system_prompt = """
+        """Analyze ticket for intent, sentiment, summary, and field proposals"""
+        
+        # Handle both snake_case and camelCase keys (due to Pydantic aliases)
+        ticket_fields = ticket_context.get("ticket_fields") or ticket_context.get("ticketFields") or []
+        
+        system_prompt = f"""
         You are an expert customer support analyzer. Analyze the ticket and return JSON with:
         - intent: (inquiry, complaint, request, technical_issue)
         - sentiment: (positive, neutral, negative, urgent)
         - summary: 1-sentence summary in Korean
         - key_entities: list of important entities
+        - field_proposals: List of suggested field updates based on the provided schema.
+          Each proposal must include:
+          - field_name: The API name of the field (from schema)
+          - field_label: The display label of the field
+          - proposed_value: The value to set (must match schema choices if applicable)
+          - reason: A clear explanation in Korean why this value is proposed.
+
+        IMPORTANT: 
+        - Only propose updates for fields defined in the 'ticket_fields_schema' below.
+        - Pay special attention to nested fields (fields with 'choices' that have sub-choices).
+        - For nested fields, propose the leaf value if possible, or the appropriate level value.
+        
+        Ticket Fields Schema:
+        {json.dumps(ticket_fields, ensure_ascii=False, indent=2)}
         """
         
-        user_prompt = json.dumps(ticket_context, ensure_ascii=False)
+        # Remove ticket_fields from user_prompt to save tokens, as it's in system prompt
+        context_copy = ticket_context.copy()
+        context_copy.pop("ticket_fields", None)
+        context_copy.pop("ticketFields", None)
+        
+        user_prompt = json.dumps(context_copy, ensure_ascii=False)
         
         response = await self.generate(
             system_prompt=system_prompt,

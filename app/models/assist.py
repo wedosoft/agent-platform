@@ -27,7 +27,9 @@ class AnalyzeRequest(BaseModel):
     priority: Optional[int] = None
     status: Optional[int] = None
     tags: Optional[List[str]] = None
+    ticket_fields: Optional[List[Dict[str, Any]]] = Field(default=None, alias="ticketFields")
     stream_progress: bool = Field(default=True, alias="streamProgress")
+    async_mode: bool = Field(default=False, alias="asyncMode")
 
 
 class ApproveRequest(BaseModel):
@@ -85,6 +87,16 @@ class KBReference(BaseModel):
     url: Optional[str] = None
 
 
+class FieldProposal(BaseModel):
+    """개별 필드 제안 모델"""
+    model_config = ConfigDict(populate_by_name=True)
+
+    field_name: str = Field(..., alias="fieldName")
+    field_label: str = Field(..., alias="fieldLabel")
+    proposed_value: Any = Field(..., alias="proposedValue")
+    reason: str
+
+
 class Proposal(BaseModel):
     """AI 제안 모델"""
     model_config = ConfigDict(populate_by_name=True)
@@ -94,9 +106,15 @@ class Proposal(BaseModel):
     ticket_id: str = Field(..., alias="ticketId")
     proposal_version: int = Field(default=1, alias="proposalVersion")
 
+    # 분석 결과
+    summary: Optional[str] = None
+    intent: Optional[str] = None
+    sentiment: Optional[str] = None
+
     # 제안 내용
-    draft_response: str = Field(..., alias="draftResponse")
+    draft_response: Optional[str] = Field(default=None, alias="draftResponse")
     field_updates: Optional[Dict[str, Any]] = Field(default=None, alias="fieldUpdates")
+    field_proposals: Optional[List[FieldProposal]] = Field(default=None, alias="fieldProposals")
     reasoning: Optional[str] = None
 
     # 메타데이터
