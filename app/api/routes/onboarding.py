@@ -4,12 +4,11 @@ import json
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.services.gemini_client import get_gemini_client
-from app.services.gemini_file_search import upload_document_to_store, get_store_documents
 from app.services.onboarding_repository import get_onboarding_repository
 from app.services.supabase_kb_client import get_kb_client
 from app.core.config import get_settings
@@ -19,9 +18,8 @@ router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
 settings = get_settings()
 
-# 온보딩에서 사용할 RAG 스토어들
+# 온보딩에서 사용할 RAG 스토어
 STORE_PRODUCT = settings.gemini_store_common      # 제품 지식 (Freshworks, Google 등)
-STORE_HANDOVER = settings.gemini_store_onboarding  # 인수인계/프로세스 문서
 
 
 # ============================================
@@ -493,90 +491,6 @@ async def get_all_progress():
         return {"sessions": summaries}
     except Exception as e:
         logger.error(f"Failed to get all progress: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ============================================
-# 문서 업로드 (인수인계/프로세스 문서)
-# ============================================
-
-@router.post("/documents")
-async def upload_onboarding_document(
-    file: UploadFile = File(...),
-    metadata: Optional[str] = Form(None),
-):
-    """온보딩/인수인계 문서 업로드."""
-    if not STORE_HANDOVER:
-        raise HTTPException(
-            status_code=500,
-            detail="Onboarding store not configured"
-        )
-    
-    try:
-        parsed_metadata = []
-        if metadata:
-            parsed_metadata = json.loads(metadata)
-        
-        file_content = await file.read()
-        result = await upload_document_to_store(
-            store_name=STORE_HANDOVER,
-            file_name=file.filename or "document.txt",
-            file_content=file_content,
-            metadata=parsed_metadata,
-        )
-        
-        logger.info(f"Uploaded document: {result.get('displayName')}")
-        return result
-        
-    except Exception as e:
-        logger.error(f"Document upload failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/documents")
-async def list_onboarding_documents(
-    category: Optional[str] = None,
-):
-    """업로드된 온보딩 문서 목록 조회."""
-    if not STORE_HANDOVER:
-        raise HTTPException(
-            status_code=500,
-            detail="Onboarding store not configured"
-        )
-    
-    try:
-        result = await get_store_documents(STORE_HANDOVER)
-        documents = result.get("documents", [])
-        
-        # 카테고리 필터링
-        if category:
-            documents = [
-                doc for doc in documents
-                if any(
-                    m.get("key") == "category" and m.get("stringValue") == category
-                    for m in (doc.get("customMetadata") or [])
-                )
-            ]
-        
-        return documents
-        
-    except Exception as e:
-        logger.error(f"Document list failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.delete("/documents/{document_name:path}")
-async def delete_onboarding_document(document_name: str):
-    """온보딩 문서 삭제."""
-    from app.services.gemini_file_search import delete_document
-
-    try:
-        await delete_document(document_name)
-        logger.info(f"Deleted document: {document_name}")
-        return {"success": True, "deleted": document_name}
-
-    except Exception as e:
-        logger.error(f"Document delete failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

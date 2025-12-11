@@ -608,12 +608,10 @@ async def get_questions(
                 logger.info(f"Content insufficient for module {module_id}. Attempting RAG search to supplement content...")
                 try:
                     settings = _get_settings()
-                    # 제품 지식(Common)과 온보딩 자료(Onboarding) 모두 활용하여 가장 근접한 내용 검색
+                    # 제품 지식(Common)만 사용하여 RAG 검색
                     rag_stores = []
                     if settings.gemini_store_common:
                         rag_stores.append(settings.gemini_store_common)
-                    if settings.gemini_store_onboarding:
-                        rag_stores.append(settings.gemini_store_onboarding)
                     
                     if rag_stores:
                         search_client = _get_file_search_client()
