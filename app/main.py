@@ -23,6 +23,7 @@ logging.getLogger("app").setLevel(settings.log_level)
 # Silence noisy libraries
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("hpack").setLevel(logging.WARNING)
 
 
 @asynccontextmanager
@@ -45,8 +46,12 @@ app = FastAPI(title=settings.app_name, lifespan=lifespan)
 allowed_origins = [
     "http://localhost:3000",
     "http://localhost:3001",  # Onboarding frontend
+    "http://localhost:3002",
+    "http://localhost:3003",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:3001",
+    "http://127.0.0.1:4173",  # Playwright test
+    "http://localhost:4173",
     "https://localhost:3000",
     "https://ameer-timberless-paragogically.ngrok-free.dev",
     "https://www.wedosoft.net",

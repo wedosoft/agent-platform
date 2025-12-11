@@ -447,10 +447,20 @@ async def stream_module_chat(
 async def _generate_quiz_questions(module_id: UUID, module_name: str, module_desc: str = "", module_content: str = "") -> List[QuizQuestion]:
     """Gemini를 사용하여 퀴즈 문제 생성 및 DB 저장."""
     try:
+        # 콘텐츠 검증: 최소 300자 이상 필요
+        MIN_CONTENT_LENGTH = 300
+        if not module_content or len(module_content.strip()) < MIN_CONTENT_LENGTH:
+            logger.warning(
+                f"Module {module_id} ({module_name}) has insufficient content "
+                f"({len(module_content) if module_content else 0} chars). "
+                f"Minimum {MIN_CONTENT_LENGTH} chars required for quiz generation."
+            )
+            return []
+        
         client = get_gemini_client()
         
         # 컨텍스트가 너무 길면 잘라냄 (토큰 제한 고려)
-        context_text = module_content[:10000] if module_content else "No specific content provided."
+        context_text = module_content[:15000] if module_content else ""
         
         prompt = f"""
         Topic: {module_name}
@@ -459,20 +469,26 @@ async def _generate_quiz_questions(module_id: UUID, module_name: str, module_des
         Reference Content:
         {context_text}
         
-        Based on the Reference Content above, generate 3 multiple-choice quiz questions to check understanding of this topic.
-        If the content is insufficient, use general knowledge about '{module_name}'.
+        **IMPORTANT**: You MUST create quiz questions based ONLY on the Reference Content provided above.
+        Do NOT use general knowledge or external information.
+        If the reference content is insufficient, return an error message instead of generating questions.
         
-        Target audience: New employees learning the system.
-        Language: Korean.
+        Based on the Reference Content above, generate 3 multiple-choice quiz questions to check understanding of this specific module content.
+        
+        Requirements:
+        - Questions must be directly related to the content provided
+        - Answers must be found in the reference content
+        - Target audience: New employees learning the system
+        - Language: Korean
         
         Format: JSON Array of objects.
         Each object must have:
-        - question: string
+        - question: string (질문)
         - choices: array of objects {{"id": "a", "text": "..."}} (ids should be a, b, c, d)
-        - context: string (optional, brief background context)
+        - context: string (optional, brief background context from the reference)
         - correct_choice_id: string (id of the correct choice, e.g., "a")
-        - explanation: string (explanation of why the answer is correct)
-        - learning_point: string (key takeaway)
+        - explanation: string (explanation of why the answer is correct, referencing the content)
+        - learning_point: string (key takeaway from this question)
         
         Output ONLY the JSON array.
         """
@@ -560,7 +576,7 @@ async def get_questions(
     
     if not questions:
         # 퀴즈가 없으면 AI로 생성 및 저장
-        logger.info(f"No questions found for module {module_id}. Generating with AI...")
+        logger.info(f"No questions found for module {module_id}. Attempting to generate with AI...")
         
         module_name = "Onboarding Knowledge"
         module_desc = ""
@@ -570,7 +586,7 @@ async def get_questions(
             # 모듈 정보 조회
             module = await repo.get_module_by_id(module_id)
             if module:
-                module_name = module.nameKo
+                module_name = module.name_ko
                 module_desc = module.description
             
             # 모듈 콘텐츠(섹션) 조회하여 컨텍스트 구성
@@ -582,13 +598,57 @@ async def get_questions(
                         if section.content_md:
                             content_parts.append(f"--- Section: {section.title_ko} ---\n{section.content_md}")
                 module_content = "\n\n".join(content_parts)
+                
+                logger.info(f"Retrieved {len(content_parts)} content sections, total length: {len(module_content)} chars")
             except Exception as e:
                 logger.warning(f"Failed to get module contents for context: {e}")
-                
-        except Exception:
-            logger.warning(f"Failed to get module info for {module_id}, using default topic.")
-            
+
+            # [Fallback] 콘텐츠가 부족한 경우 RAG 검색으로 보완
+            if not module_content or len(module_content.strip()) < 300:
+                logger.info(f"Content insufficient for module {module_id}. Attempting RAG search to supplement content...")
+                try:
+                    settings = _get_settings()
+                    # 제품 지식(Common)과 온보딩 자료(Onboarding) 모두 활용하여 가장 근접한 내용 검색
+                    rag_stores = []
+                    if settings.gemini_store_common:
+                        rag_stores.append(settings.gemini_store_common)
+                    if settings.gemini_store_onboarding:
+                        rag_stores.append(settings.gemini_store_onboarding)
+                    
+                    if rag_stores:
+                        search_client = _get_file_search_client()
+                        search_query = f"{module_name} {module_desc}"
+                        
+                        # 검색 수행 (요약 요청)
+                        search_result = await search_client.search(
+                            query=search_query,
+                            store_names=rag_stores,
+                            system_instruction="Provide a detailed summary of the key concepts and procedures related to the topic, suitable for creating a quiz. Focus on factual information found in the documents."
+                        )
+                        
+                        if search_result and search_result.get("text"):
+                            rag_content = search_result["text"]
+                            module_content = f"--- RAG Retrieved Content (Supplemented from {', '.join(rag_stores)}) ---\n{rag_content}\n\n" + module_content
+                            logger.info(f"Supplemented content with RAG search result ({len(rag_content)} chars).")
+                        else:
+                            logger.warning("RAG search returned no text.")
+                    else:
+                        logger.warning("No Gemini store configured for RAG fallback.")
+                except Exception as e:
+                    logger.warning(f"Failed to supplement content with RAG: {e}")
+        
+        except Exception as e:
+            logger.warning(f"Failed to get module info for {module_id}: {e}, using default topic.")
+        
+        # AI로 퀴즈 생성 시도
         questions = await _generate_quiz_questions(module_id, module_name, module_desc, module_content)
+        
+        # 콘텐츠 부족으로 퀴즈를 생성하지 못한 경우 로그 남김
+        if not questions:
+            logger.info(
+                f"Quiz generation skipped for module {module_id} ({module_name}) "
+                f"due to insufficient content. Please add curriculum content first."
+            )
             
     return questions
 
