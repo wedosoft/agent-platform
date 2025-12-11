@@ -741,7 +741,6 @@ def get_curriculum_repository() -> CurriculumRepository:
         client = create_client(
             settings.supabase_common_url,
             settings.supabase_common_service_role_key,
-            options=ClientOptions(schema="onboarding"),
         )
         _repository = CurriculumRepository(client)
     
