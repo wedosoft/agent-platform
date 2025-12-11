@@ -599,6 +599,15 @@ class CreateKnowledgeArticleRequest(BaseModel):
     structuredSummary: str
 
 
+class UpdateKnowledgeArticleRequest(BaseModel):
+    """지식 아티클 수정 요청."""
+    title: Optional[str] = None
+    author: Optional[str] = None
+    category: Optional[str] = None
+    rawContent: Optional[str] = None
+    structuredSummary: Optional[str] = None
+
+
 class KnowledgeArticleResponse(BaseModel):
     """지식 아티클 응답."""
     id: str
@@ -680,7 +689,7 @@ async def structure_knowledge_content(request: StructureKnowledgeRequest):
 
 위 내용을 마크다운 형식으로 구조화하세요. 한국어로 작성하세요."""
 
-        response = await client.generate_content(
+        response = client.generate_content(
             contents=prompt,
             config={"thinking_config": {"thinking_budget": 0}}
         )
@@ -725,6 +734,30 @@ async def create_knowledge_article(request: CreateKnowledgeArticleRequest):
     _knowledge_store.append(article)
     logger.info(f"Created knowledge article: {article['title']}")
 
+    return article
+
+
+@router.put("/knowledge/{article_id}", response_model=KnowledgeArticleResponse)
+async def update_knowledge_article(article_id: str, request: UpdateKnowledgeArticleRequest):
+    """지식 아티클 수정."""
+    global _knowledge_store
+
+    article = next((a for a in _knowledge_store if a.get("id") == article_id), None)
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    if request.title:
+        article["title"] = request.title
+    if request.author:
+        article["author"] = request.author
+    if request.category:
+        article["category"] = request.category
+    if request.rawContent:
+        article["rawContent"] = request.rawContent
+    if request.structuredSummary:
+        article["structuredSummary"] = request.structuredSummary
+
+    logger.info(f"Updated knowledge article: {article['title']}")
     return article
 
 
