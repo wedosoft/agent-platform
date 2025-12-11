@@ -1,0 +1,19 @@
+{
+	"folders": [
+		{
+			"name": "agent-platform",
+			"path": "."
+		},
+		{
+			"name": "project-a-spinoff",
+			"path": "../project-a-spinoff"
+		},
+		{
+			"path": "../onboarding"
+		},
+		{
+			"path": "../homepage"
+		}
+	],
+	"settings": {}
+}

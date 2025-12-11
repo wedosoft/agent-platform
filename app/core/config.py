@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     gemini_store_tickets: Optional[str] = None
     gemini_store_articles: Optional[str] = None
     gemini_store_common: Optional[str] = None
+    gemini_store_onboarding: Optional[str] = None
 
     # Freshdesk
     freshdesk_domain: Optional[str] = None
