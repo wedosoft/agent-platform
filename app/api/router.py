@@ -10,6 +10,7 @@ from app.api.routes import (
     file_search,
     health,
     multitenant,
+    onboarding,
     pipeline,
     sessions,
     sync,
@@ -31,5 +32,6 @@ def get_api_router() -> APIRouter:
     router.include_router(assist.router)  # FDK Custom App assist API
     router.include_router(admin.router)  # Admin API for tenant management
     router.include_router(sync.router, prefix="/sync")  # Sync API for data synchronization
+    router.include_router(onboarding.router)  # Onboarding API
     router.include_router(curriculum.router)  # Curriculum API for product training
     return router

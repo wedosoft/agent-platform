@@ -578,7 +578,7 @@ async def get_questions(
         # 퀴즈가 없으면 AI로 생성 및 저장
         logger.info(f"No questions found for module {module_id}. Attempting to generate with AI...")
         
-        module_name = "Unknown Module"
+        module_name = "Onboarding Knowledge"
         module_desc = ""
         module_content = ""
         
