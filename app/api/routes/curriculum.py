@@ -40,6 +40,16 @@ def _get_settings():
     return get_settings()
 
 
+def _build_product_filters(product_id: str, category_slug: Optional[str] = None) -> List[MetadataFilter]:
+    """공용 스토어에서 제품별 문서만 검색하도록 메타데이터 필터를 생성."""
+    filters: List[MetadataFilter] = []
+    if product_id:
+        filters.append(MetadataFilter(key="product", value=product_id))
+    if category_slug:
+        filters.append(MetadataFilter(key="category", value=category_slug))
+    return filters
+
+
 def _get_file_search_client() -> GeminiFileSearchClient:
     """GeminiFileSearchClient 인스턴스 생성."""
     settings = _get_settings()
@@ -129,18 +139,17 @@ async def stream_learning_content(
             settings = _get_settings()
             store_product = settings.gemini_store_common
             
-            # RAG 검색 쿼리 구성
-            query = f"""Freshservice {module.name_ko}에 대해 자세히 설명해주세요.
+            # RAG 검색 쿼리 구성 (제품/카테고리 범위 명시)
+            query = f"""{module.target_product_id} {module.name_ko} 모듈 전용 학습 콘텐츠를 생성하세요.
 
-다음 내용을 포함해서 구조화된 학습 콘텐츠를 제공해주세요:
-1. 개요 및 핵심 개념
-2. 주요 기능과 사용법
-3. 실무 활용 팁
-4. 자주 묻는 질문
+다음 섹션을 모두 포함하세요:
+1) 개요 및 핵심 개념
+2) 주요 기능과 사용법
+3) 실무 활용 팁
+4) 자주 묻는 질문
 
-{module.description or ''}
-
-한국어로 마크다운 형식으로 답변해주세요."""
+모듈 설명: {module.description or '설명 없음'}
+제품/카테고리 외의 내용은 포함하지 마세요."""
 
             # RAG 스토어 검색
             rag_stores = []
@@ -155,10 +164,16 @@ async def stream_learning_content(
             client = _get_file_search_client()
             
             full_response = ""
+            product_filters = _build_product_filters(module.target_product_id, module.kb_category_slug)
+
             async for chunk in client.stream_search(
                 query=query,
                 store_names=rag_stores,
-                system_instruction=f"당신은 Freshservice {module.name_ko} 전문 교육 강사입니다. 신입사원이 이해하기 쉽도록 명확하고 구체적인 설명을 제공하세요.",
+                metadata_filters=product_filters,
+                system_instruction=(
+                    f"당신은 {module.target_product_id} 제품의 '{module.name_ko}' 모듈 강사입니다. "
+                    "스토어 메타데이터 product/category에 맞는 문서만 사용하세요. 범위를 벗어나면 에러를 반환하세요."
+                ),
             ):
                 event_type = chunk.get("event")
                 data = chunk.get("data", {})
@@ -173,9 +188,10 @@ async def stream_learning_content(
                         yield format_sse("result", {"text": text})
                 elif event_type == "error":
                     yield format_sse("error", data)
-            
+                    return
+
             if not full_response:
-                yield format_sse("error", {"message": "콘텐츠를 생성하지 못했습니다."})
+                yield format_sse("error", {"message": "학습 콘텐츠를 생성하지 못했습니다. 관리자에게 콘텐츠를 추가해 달라고 요청하세요."})
             
         except Exception as e:
             logger.error(f"Learning content stream error: {e}")
@@ -269,11 +285,12 @@ async def stream_section_content(
             store_product = settings.gemini_store_common
             
             # RAG 검색 쿼리 구성
-            query = f"""Freshservice {module.name_ko}에 대해 다음 요청에 맞게 답변해주세요.
+            query = f"""{module.target_product_id} 제품의 '{module.name_ko}' 모듈 섹션 요청입니다.
 
 {section_prompt}
 
-컨텍스트: {module.description or ''}"""
+컨텍스트(모듈 설명): {module.description or '설명 없음'}
+제품/카테고리 범위를 벗어난 내용은 포함하지 마세요."""
 
             # RAG 스토어 검색
             rag_stores = []
@@ -287,10 +304,16 @@ async def stream_section_content(
             # 스트리밍 생성
             client = _get_file_search_client()
             
+            product_filters = _build_product_filters(module.target_product_id, module.kb_category_slug)
+
             async for chunk in client.stream_search(
                 query=query,
                 store_names=rag_stores,
-                system_instruction=f"당신은 Freshservice {module.name_ko} 전문 교육 강사입니다. 신입사원이 이해하기 쉽도록 명확하고 구체적인 설명을 제공하세요. 요청된 분량을 준수하세요.",
+                metadata_filters=product_filters,
+                system_instruction=(
+                    f"당신은 {module.target_product_id} 제품의 '{module.name_ko}' 모듈 강사입니다. "
+                    "스토어 메타데이터 product/category에 맞는 문서만 사용하세요. 범위를 벗어나면 에러를 반환하세요."
+                ),
             ):
                 event_type = chunk.get("event")
                 data = chunk.get("data", {})
@@ -304,6 +327,10 @@ async def stream_section_content(
                         yield format_sse("result", {"text": text})
                 elif event_type == "error":
                     yield format_sse("error", data)
+                    return
+
+            if not text:
+                yield format_sse("error", {"message": "해당 섹션 콘텐츠를 생성하지 못했습니다. 관리자에게 콘텐츠를 추가해 달라고 요청하세요."})
             
         except Exception as e:
             logger.error(f"Section content stream error: {e}")
@@ -397,15 +424,11 @@ async def stream_module_chat(
             rag_stores = []
             if store_product:
                 rag_stores.append(store_product)
-            
-            # 제품별 메타데이터 필터 생성 (IN 연산자로 OR 처리)
-            metadata_filters = None
-            if rag_product_values:
-                metadata_filters = [MetadataFilter(
-                    key="product",
-                    value=",".join(rag_product_values),  # comma-separated for IN operator
-                    operator="IN"
-                )]
+
+            metadata_filters = _build_product_filters(
+                product_id=product_id,
+                category_slug=module.kb_category_slug,
+            )
             
             # 스트리밍 생성
             client = _get_file_search_client()
@@ -418,16 +441,27 @@ async def stream_module_chat(
                 conversation_history=history[-4:],  # 최근 4턴
                 system_instruction=system_prompt,
             ):
-                # stream_search returns {"event": "result", "data": {"text": "..."}}
-                if chunk.get("event") == "result" and chunk.get("data", {}).get("text"):
-                    text = chunk["data"]["text"]
-                    full_response = text  # 전체 응답
+                event_type = chunk.get("event")
+                data = chunk.get("data", {})
+
+                if event_type == "status":
+                    continue
+                if event_type == "error":
+                    yield format_sse("error", data or {"message": "문서를 불러오지 못했습니다."})
+                    return
+                if event_type == "result" and data.get("text"):
+                    text = data["text"]
+                    full_response = text
                     yield format_sse("chunk", {"text": text})
             
+            if not full_response:
+                yield format_sse("error", {"message": "모듈 컨텍스트에 맞는 답변을 생성하지 못했습니다. 관리자에게 콘텐츠 보강을 요청하세요."})
+                return
+
             # 히스토리 업데이트
             history.append({"user": query, "model": full_response})
             _module_chat_cache[cache_key] = history[-10:]  # 최근 10턴만 유지
-            
+
             yield format_sse("result", {"text": full_response})
             
         except Exception as e:
@@ -456,7 +490,7 @@ async def _generate_quiz_questions(module_id: UUID, module_name: str, module_des
                 f"Minimum {MIN_CONTENT_LENGTH} chars required for quiz generation."
             )
             return []
-        
+    
         client = get_gemini_client()
         
         # 컨텍스트가 너무 길면 잘라냄 (토큰 제한 고려)
