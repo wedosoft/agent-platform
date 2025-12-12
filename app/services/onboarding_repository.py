@@ -11,6 +11,7 @@ from supabase import Client, ClientOptions, create_client
 
 from app.core.config import get_settings
 from app.models.onboarding import (
+    KnowledgeArticle,
     OnboardingProgress,
     OnboardingProgressSummary,
     OnboardingSession,
@@ -21,6 +22,7 @@ LOGGER = logging.getLogger(__name__)
 # Supabase 테이블명
 TABLE_SESSIONS = "onboarding_sessions"
 TABLE_PROGRESS = "onboarding_progress"
+TABLE_KNOWLEDGE_ARTICLES = "knowledge_articles"
 
 
 class OnboardingRepositoryError(RuntimeError):
@@ -217,6 +219,170 @@ class OnboardingRepository:
         except Exception as e:
             LOGGER.error(f"Failed to get all sessions summary: {e}")
             return []
+
+    # ============================================
+    # 자료실 (Knowledge Articles) 관리
+    # ============================================
+
+    async def create_knowledge_article(
+        self,
+        title: str,
+        author: str,
+        category: str,
+        raw_content: str,
+        structured_summary: Optional[str] = None,
+    ) -> KnowledgeArticle:
+        """자료실 문서 생성."""
+        now = datetime.now(timezone.utc).isoformat()
+        data = {
+            "title": title,
+            "author": author,
+            "category": category,
+            "raw_content": raw_content,
+            "structured_summary": structured_summary,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        try:
+            response = self.client.table(TABLE_KNOWLEDGE_ARTICLES).insert(data).execute()
+            if response.data:
+                row = response.data[0]
+                return KnowledgeArticle(
+                    id=row["id"],
+                    title=row["title"],
+                    author=row["author"],
+                    category=row["category"],
+                    rawContent=row["raw_content"],
+                    structuredSummary=row.get("structured_summary"),
+                    createdAt=row.get("created_at"),
+                    updatedAt=row.get("updated_at"),
+                )
+            raise OnboardingRepositoryError("Failed to create knowledge article")
+        except Exception as e:
+            LOGGER.error(f"Failed to create knowledge article: {e}")
+            raise OnboardingRepositoryError(str(e)) from e
+
+    async def get_knowledge_articles(
+        self, category: Optional[str] = None
+    ) -> List[KnowledgeArticle]:
+        """자료실 문서 목록 조회 (카테고리별 필터링 가능)."""
+        try:
+            query = self.client.table(TABLE_KNOWLEDGE_ARTICLES).select("*")
+
+            if category:
+                query = query.eq("category", category)
+
+            response = query.order("created_at", desc=True).execute()
+
+            return [
+                KnowledgeArticle(
+                    id=row["id"],
+                    title=row["title"],
+                    author=row["author"],
+                    category=row["category"],
+                    rawContent=row["raw_content"],
+                    structuredSummary=row.get("structured_summary"),
+                    createdAt=row.get("created_at"),
+                    updatedAt=row.get("updated_at"),
+                )
+                for row in (response.data or [])
+            ]
+        except Exception as e:
+            LOGGER.error(f"Failed to get knowledge articles: {e}")
+            return []
+
+    async def get_knowledge_article(self, article_id: str) -> Optional[KnowledgeArticle]:
+        """자료실 문서 단건 조회."""
+        try:
+            response = (
+                self.client.table(TABLE_KNOWLEDGE_ARTICLES)
+                .select("*")
+                .eq("id", article_id)
+                .limit(1)
+                .execute()
+            )
+            if response.data:
+                row = response.data[0]
+                return KnowledgeArticle(
+                    id=row["id"],
+                    title=row["title"],
+                    author=row["author"],
+                    category=row["category"],
+                    rawContent=row["raw_content"],
+                    structuredSummary=row.get("structured_summary"),
+                    createdAt=row.get("created_at"),
+                    updatedAt=row.get("updated_at"),
+                )
+            return None
+        except Exception as e:
+            LOGGER.error(f"Failed to get knowledge article: {e}")
+            return None
+
+    async def update_knowledge_article(
+        self,
+        article_id: str,
+        title: Optional[str] = None,
+        author: Optional[str] = None,
+        category: Optional[str] = None,
+        raw_content: Optional[str] = None,
+        structured_summary: Optional[str] = None,
+    ) -> Optional[KnowledgeArticle]:
+        """자료실 문서 수정."""
+        data = {}
+        if title is not None:
+            data["title"] = title
+        if author is not None:
+            data["author"] = author
+        if category is not None:
+            data["category"] = category
+        if raw_content is not None:
+            data["raw_content"] = raw_content
+        if structured_summary is not None:
+            data["structured_summary"] = structured_summary
+
+        if not data:
+            return await self.get_knowledge_article(article_id)
+
+        data["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+        try:
+            response = (
+                self.client.table(TABLE_KNOWLEDGE_ARTICLES)
+                .update(data)
+                .eq("id", article_id)
+                .execute()
+            )
+            if response.data:
+                row = response.data[0]
+                return KnowledgeArticle(
+                    id=row["id"],
+                    title=row["title"],
+                    author=row["author"],
+                    category=row["category"],
+                    rawContent=row["raw_content"],
+                    structuredSummary=row.get("structured_summary"),
+                    createdAt=row.get("created_at"),
+                    updatedAt=row.get("updated_at"),
+                )
+            return None
+        except Exception as e:
+            LOGGER.error(f"Failed to update knowledge article: {e}")
+            raise OnboardingRepositoryError(str(e)) from e
+
+    async def delete_knowledge_article(self, article_id: str) -> bool:
+        """자료실 문서 삭제."""
+        try:
+            response = (
+                self.client.table(TABLE_KNOWLEDGE_ARTICLES)
+                .delete()
+                .eq("id", article_id)
+                .execute()
+            )
+            return len(response.data or []) > 0
+        except Exception as e:
+            LOGGER.error(f"Failed to delete knowledge article: {e}")
+            raise OnboardingRepositoryError(str(e)) from e
 
 
 # ============================================

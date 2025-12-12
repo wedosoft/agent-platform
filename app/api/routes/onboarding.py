@@ -533,8 +533,8 @@ class KnowledgeArticleResponse(BaseModel):
     createdAt: str
 
 
-# 인메모리 저장소 (실제 프로덕션에서는 Supabase 사용)
-_knowledge_store: list = []
+# 인메모리 저장소 제거 (Supabase 사용)
+# _knowledge_store: list = []  # DEPRECATED: Supabase로 마이그레이션됨
 
 
 def get_structure_prompt(category: str) -> str:
@@ -617,77 +617,108 @@ async def structure_knowledge_content(request: StructureKnowledgeRequest):
 
 @router.get("/knowledge", response_model=List[KnowledgeArticleResponse])
 async def get_knowledge_articles(category: Optional[str] = None):
-    """지식 아티클 목록 조회."""
-    articles = _knowledge_store
+    """지식 아티클 목록 조회 (Supabase)."""
+    repo = get_onboarding_repository()
+    articles = await repo.get_knowledge_articles(category=category)
 
-    if category:
-        articles = [a for a in articles if a.get("category") == category]
-
-    # 최신순 정렬
-    articles = sorted(articles, key=lambda x: x.get("createdAt", ""), reverse=True)
-
-    return articles
+    return [
+        KnowledgeArticleResponse(
+            id=article.id,
+            title=article.title,
+            author=article.author,
+            category=article.category,
+            rawContent=article.raw_content,
+            structuredSummary=article.structured_summary,
+            createdAt=article.created_at.strftime("%Y-%m-%d") if article.created_at else "",
+        )
+        for article in articles
+    ]
 
 
 @router.post("/knowledge", response_model=KnowledgeArticleResponse)
 async def create_knowledge_article(request: CreateKnowledgeArticleRequest):
-    """지식 아티클 생성."""
-    import uuid
-    from datetime import datetime
+    """지식 아티클 생성 (Supabase)."""
+    repo = get_onboarding_repository()
 
-    article = {
-        "id": str(uuid.uuid4()),
-        "title": request.title,
-        "author": request.author,
-        "category": request.category,
-        "rawContent": request.rawContent,
-        "structuredSummary": request.structuredSummary,
-        "createdAt": datetime.now().strftime("%Y-%m-%d"),
-    }
+    try:
+        article = await repo.create_knowledge_article(
+            title=request.title,
+            author=request.author,
+            category=request.category,
+            raw_content=request.rawContent,
+            structured_summary=request.structuredSummary,
+        )
 
-    _knowledge_store.append(article)
-    logger.info(f"Created knowledge article: {article['title']}")
+        logger.info(f"Created knowledge article: {article.title}")
 
-    return article
+        return KnowledgeArticleResponse(
+            id=article.id,
+            title=article.title,
+            author=article.author,
+            category=article.category,
+            rawContent=article.raw_content,
+            structuredSummary=article.structured_summary,
+            createdAt=article.created_at.strftime("%Y-%m-%d") if article.created_at else "",
+        )
+    except Exception as e:
+        logger.error(f"Failed to create knowledge article: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/knowledge/{article_id}", response_model=KnowledgeArticleResponse)
 async def update_knowledge_article(article_id: str, request: UpdateKnowledgeArticleRequest):
-    """지식 아티클 수정."""
-    global _knowledge_store
+    """지식 아티클 수정 (Supabase)."""
+    repo = get_onboarding_repository()
 
-    article = next((a for a in _knowledge_store if a.get("id") == article_id), None)
-    if not article:
-        raise HTTPException(status_code=404, detail="Article not found")
+    try:
+        article = await repo.update_knowledge_article(
+            article_id=article_id,
+            title=request.title,
+            author=request.author,
+            category=request.category,
+            raw_content=request.rawContent,
+            structured_summary=request.structuredSummary,
+        )
 
-    if request.title:
-        article["title"] = request.title
-    if request.author:
-        article["author"] = request.author
-    if request.category:
-        article["category"] = request.category
-    if request.rawContent:
-        article["rawContent"] = request.rawContent
-    if request.structuredSummary:
-        article["structuredSummary"] = request.structuredSummary
+        if not article:
+            raise HTTPException(status_code=404, detail="Article not found")
 
-    logger.info(f"Updated knowledge article: {article['title']}")
-    return article
+        logger.info(f"Updated knowledge article: {article.title}")
+
+        return KnowledgeArticleResponse(
+            id=article.id,
+            title=article.title,
+            author=article.author,
+            category=article.category,
+            rawContent=article.raw_content,
+            structuredSummary=article.structured_summary,
+            createdAt=article.created_at.strftime("%Y-%m-%d") if article.created_at else "",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update knowledge article: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/knowledge/{article_id}")
 async def delete_knowledge_article(article_id: str):
-    """지식 아티클 삭제."""
-    global _knowledge_store
+    """지식 아티클 삭제 (Supabase)."""
+    repo = get_onboarding_repository()
 
-    original_count = len(_knowledge_store)
-    _knowledge_store = [a for a in _knowledge_store if a.get("id") != article_id]
+    try:
+        success = await repo.delete_knowledge_article(article_id)
 
-    if len(_knowledge_store) == original_count:
-        raise HTTPException(status_code=404, detail="Article not found")
+        if not success:
+            raise HTTPException(status_code=404, detail="Article not found")
 
-    logger.info(f"Deleted knowledge article: {article_id}")
-    return {"success": True}
+        logger.info(f"Deleted knowledge article: {article_id}")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete knowledge article: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================

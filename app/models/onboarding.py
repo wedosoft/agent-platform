@@ -44,3 +44,19 @@ class OnboardingProgressSummary(BaseModel):
 
     class Config:
         populate_by_name = True
+
+
+class KnowledgeArticle(BaseModel):
+    """자료실 지식 문서 모델."""
+
+    id: Optional[str] = None
+    title: str
+    author: str
+    category: str
+    raw_content: str = Field(..., alias="rawContent")
+    structured_summary: Optional[str] = Field(None, alias="structuredSummary")
+    created_at: Optional[datetime] = Field(None, alias="createdAt")
+    updated_at: Optional[datetime] = Field(None, alias="updatedAt")
+
+    class Config:
+        populate_by_name = True

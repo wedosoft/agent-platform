@@ -1,0 +1,28 @@
+2025-12-12 09:29:46.312 +0900 [debug] (configs.js) loaded default configs as "{"updates":{"manifest_url":"https://cdn.freshdev.io/assets/fdk/updates.json","period":24},"log":{"level":"info"},"javascript":{"ecma_version":2020},"request":{"timeout":15000},"global_apps":{"enabled":true},"easel":{"enabled":false},"job":{"timeout":120000}}"
+2025-12-12 09:29:46.313 +0900 [debug] (configs.js) loaded global configs as "{"global_apps":{"enabled":"true"}}"
+2025-12-12 09:29:46.313 +0900 [debug] (file.js) Error while requiring /Users/alan/GitHub/agent-platform/.fdk/configs.json: Cannot find module '/Users/alan/GitHub/agent-platform/.fdk/configs.json'
+Require stack:
+- /Users/alan/.nvm/versions/node/v18.20.8/lib/node_modules/fdk/lib/utils/file.js
+- /Users/alan/.nvm/versions/node/v18.20.8/lib/node_modules/fdk/lib/configs.js
+- /Users/alan/.nvm/versions/node/v18.20.8/lib/node_modules/fdk/lib/logger.js
+- /Users/alan/.nvm/versions/node/v18.20.8/lib/node_modules/fdk/index.js
+2025-12-12 09:29:46.313 +0900 [debug] (file.js) Error while requiring /Users/alan/GitHub/agent-platform/.fdk/configs.json: Cannot find module '/Users/alan/GitHub/agent-platform/.fdk/configs.json'
+Require stack:
+- /Users/alan/.nvm/versions/node/v18.20.8/lib/node_modules/fdk/lib/utils/file.js
+- /Users/alan/.nvm/versions/node/v18.20.8/lib/node_modules/fdk/lib/configs.js
+- /Users/alan/.nvm/versions/node/v18.20.8/lib/node_modules/fdk/lib/logger.js
+- /Users/alan/.nvm/versions/node/v18.20.8/lib/node_modules/fdk/index.js
+2025-12-12 09:29:46.313 +0900 [debug] (configs.js) loaded local configs as "{}"
+2025-12-12 09:29:46.313 +0900 [debug] (configs.js) loaded env configs as "{"updates":{},"log":{},"javascript":{},"request":{"timeout":15000},"job":{"timeout":120000}}"
+2025-12-12 09:29:46.313 +0900 [debug] (configs.js) loaded resolved configs as "{"updates":{"manifest_url":"https://cdn.freshdev.io/assets/fdk/updates.json","period":24},"log":{"level":"info"},"javascript":{"ecma_version":2020},"request":{"timeout":15000},"global_apps":{"enabled":"true"},"easel":{"enabled":false},"job":{"timeout":120000}}"
+2025-12-12 09:29:46.313 +0900 [debug] (logger.js) Starting FDK in node v24.11.0 on darwin
+2025-12-12 09:29:46.313 +0900 [debug] (sequelize.js) setting up sqilite at "/Users/alan/GitHub/agent-platform/.fdk/store.sqlite"
+2025-12-12 09:29:46.313 +0900 [error] [31m[ERROR][0m  Node.js version of 18.x.x is required to run this SDK. v24.11.0 found.
+2025-12-12 09:29:47.012 +0900 [debug] (configs.js) loaded default configs as "{"updates":{"manifest_url":"https://cdn.freshdev.io/assets/fdk/updates.json","period":24},"log":{"level":"info"},"javascript":{"ecma_version":2020},"request":{"timeout":15000},"global_apps":{"enabled":true},"easel":{"enabled":false},"job":{"timeout":120000}}"
+2025-12-12 09:29:47.013 +0900 [debug] (configs.js) loaded global configs as "{"global_apps":{"enabled":"true"}}"
+2025-12-12 09:29:47.013 +0900 [debug] (configs.js) loaded local configs as "{"request":{"timeout":15000},"job":{"timeout":120000},"global_apps":{"enabled":"true"}}"
+2025-12-12 09:29:47.013 +0900 [debug] (configs.js) loaded env configs as "{"updates":{},"log":{},"javascript":{},"request":{"timeout":15000},"job":{"timeout":120000}}"
+2025-12-12 09:29:47.013 +0900 [debug] (configs.js) loaded resolved configs as "{"updates":{"manifest_url":"https://cdn.freshdev.io/assets/fdk/updates.json","period":24},"log":{"level":"info"},"javascript":{"ecma_version":2020},"request":{"timeout":15000},"global_apps":{"enabled":"true"},"easel":{"enabled":false},"job":{"timeout":120000}}"
+2025-12-12 09:29:47.013 +0900 [debug] (logger.js) Starting FDK in node v24.11.0 on darwin
+2025-12-12 09:29:47.013 +0900 [debug] (sequelize.js) setting up sqilite at "/Users/alan/GitHub/agent-platform/.fdk/store.sqlite"
+2025-12-12 09:29:47.013 +0900 [error] [31m[ERROR][0m  Node.js version of 18.x.x is required to run this SDK. v24.11.0 found.
