@@ -408,6 +408,7 @@ class InMemoryOnboardingRepository:
     def __init__(self) -> None:
         self._sessions: Dict[str, OnboardingSession] = {}
         self._progress: Dict[str, List[OnboardingProgress]] = {}
+        self._knowledge: Dict[str, KnowledgeArticle] = {}
 
     async def create_session(self, session_id: str, user_name: str) -> OnboardingSession:
         now = datetime.now(timezone.utc)
@@ -491,6 +492,85 @@ class InMemoryOnboardingRepository:
             })
         return summaries
 
+    # ============================================
+    # 자료실 (Knowledge Articles) 관리 - 인메모리
+    # ============================================
+
+    async def create_knowledge_article(
+        self,
+        title: str,
+        author: str,
+        category: str,
+        raw_content: str,
+        structured_summary: Optional[str] = None,
+    ) -> KnowledgeArticle:
+        import uuid
+
+        now = datetime.now(timezone.utc)
+        article_id = str(uuid.uuid4())
+        article = KnowledgeArticle(
+            id=article_id,
+            title=title,
+            author=author,
+            category=category,
+            rawContent=raw_content,
+            structuredSummary=structured_summary,
+            createdAt=now,
+            updatedAt=now,
+        )
+        self._knowledge[article_id] = article
+        return article
+
+    async def get_knowledge_articles(self, category: Optional[str] = None) -> List[KnowledgeArticle]:
+        articles = list(self._knowledge.values())
+        if category:
+            articles = [a for a in articles if a.category == category]
+        # 최신순 정렬
+        return sorted(
+            articles,
+            key=lambda a: a.created_at or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
+
+    async def get_knowledge_article(self, article_id: str) -> Optional[KnowledgeArticle]:
+        return self._knowledge.get(article_id)
+
+    async def update_knowledge_article(
+        self,
+        article_id: str,
+        title: Optional[str] = None,
+        author: Optional[str] = None,
+        category: Optional[str] = None,
+        raw_content: Optional[str] = None,
+        structured_summary: Optional[str] = None,
+    ) -> Optional[KnowledgeArticle]:
+        article = self._knowledge.get(article_id)
+        if not article:
+            return None
+
+        update_data = {}
+        if title is not None:
+            update_data["title"] = title
+        if author is not None:
+            update_data["author"] = author
+        if category is not None:
+            update_data["category"] = category
+        if raw_content is not None:
+            update_data["rawContent"] = raw_content
+        if structured_summary is not None:
+            update_data["structuredSummary"] = structured_summary
+
+        update_data["updatedAt"] = datetime.now(timezone.utc)
+        updated_article = article.model_copy(update=update_data)
+        self._knowledge[article_id] = updated_article
+        return updated_article
+
+    async def delete_knowledge_article(self, article_id: str) -> bool:
+        if article_id in self._knowledge:
+            del self._knowledge[article_id]
+            return True
+        return False
+
 
 # 싱글톤 인스턴스
 _repository_instance = None
@@ -508,7 +588,10 @@ def get_onboarding_repository():
         LOGGER.info("Using Supabase for onboarding repository")
         _repository_instance = OnboardingRepository(client)
     else:
-        LOGGER.info("Using in-memory fallback for onboarding repository")
-        _repository_instance = InMemoryOnboardingRepository()
+        # 인메모리 폴백은 개발/테스트 전용. 운영에서는 즉시 실패시켜 문제를 조기에 알린다.
+        LOGGER.error("Supabase 설정이 없어 온보딩 자료실을 영구 저장할 수 없습니다. 환경변수를 설정하세요.")
+        raise OnboardingRepositoryError(
+            "Supabase 설정(supabase_common_url, supabase_common_service_role_key)이 필요합니다."
+        )
 
     return _repository_instance

@@ -638,7 +638,11 @@ async def get_knowledge_articles(category: Optional[str] = None):
 @router.post("/knowledge", response_model=KnowledgeArticleResponse)
 async def create_knowledge_article(request: CreateKnowledgeArticleRequest):
     """지식 아티클 생성 (Supabase)."""
-    repo = get_onboarding_repository()
+    try:
+        repo = get_onboarding_repository()
+    except Exception as e:
+        logger.error(f"Supabase configuration missing for knowledge create: {e}")
+        raise HTTPException(status_code=500, detail="Supabase 설정이 없어 저장할 수 없습니다. 환경변수를 설정하세요.")
 
     try:
         article = await repo.create_knowledge_article(
@@ -668,7 +672,11 @@ async def create_knowledge_article(request: CreateKnowledgeArticleRequest):
 @router.put("/knowledge/{article_id}", response_model=KnowledgeArticleResponse)
 async def update_knowledge_article(article_id: str, request: UpdateKnowledgeArticleRequest):
     """지식 아티클 수정 (Supabase)."""
-    repo = get_onboarding_repository()
+    try:
+        repo = get_onboarding_repository()
+    except Exception as e:
+        logger.error(f"Supabase configuration missing for knowledge update: {e}")
+        raise HTTPException(status_code=500, detail="Supabase 설정이 없어 저장할 수 없습니다. 환경변수를 설정하세요.")
 
     try:
         article = await repo.update_knowledge_article(
@@ -704,7 +712,11 @@ async def update_knowledge_article(article_id: str, request: UpdateKnowledgeArti
 @router.delete("/knowledge/{article_id}")
 async def delete_knowledge_article(article_id: str):
     """지식 아티클 삭제 (Supabase)."""
-    repo = get_onboarding_repository()
+    try:
+        repo = get_onboarding_repository()
+    except Exception as e:
+        logger.error(f"Supabase configuration missing for knowledge delete: {e}")
+        raise HTTPException(status_code=500, detail="Supabase 설정이 없어 저장할 수 없습니다. 환경변수를 설정하세요.")
 
     try:
         success = await repo.delete_knowledge_article(article_id)
