@@ -5,13 +5,6 @@
 			"path": "."
 		},
 		{
-			"name": "project-a-spinoff",
-			"path": "../project-a-spinoff"
-		},
-		{
-			"path": "../onboarding"
-		},
-		{
 			"path": "../project-a"
 		}
 	],

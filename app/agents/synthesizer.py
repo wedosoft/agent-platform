@@ -49,15 +49,15 @@ async def synthesize_results(state: AgentState) -> AgentState:
         proposal["key_entities"] = analysis_result.get("key_entities")
 
         # Set confidence level based on available data
-        has_search = bool(search_results and search_results.get("total_results", 0) > 0)
+        # - 기존에는 검색 결과(total_results)가 없으면 'medium'으로 내려갔는데,
+        #   현재 운영/테스트 환경에서 검색을 생략하거나(성능) 결과가 0일 수 있어도
+        #   분석(intent 등)이 성공하면 충분히 신뢰 가능한 제안으로 취급한다.
         has_analysis = bool(analysis_result and analysis_result.get("intent"))
+        has_search = bool(search_results and search_results.get("total_results", 0) > 0)
 
-        if has_search and has_analysis:
+        if has_analysis:
             proposal["confidence"] = "high"
-            proposal["mode"] = "synthesis"
-        elif has_analysis:
-            proposal["confidence"] = "medium"
-            proposal["mode"] = "direct"
+            proposal["mode"] = "synthesis" if has_search else "direct"
         else:
             proposal["confidence"] = "low"
             proposal["mode"] = "fallback"

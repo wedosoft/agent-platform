@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime
@@ -5,8 +6,7 @@ from app.services.sync_service import SyncService, SyncOptions
 from app.services.freshdesk_client import FreshdeskClient
 from app.services.ingestion_service import TicketIngestionRecord
 
-@pytest.mark.asyncio
-async def test_sync_service_tickets_and_articles():
+def test_sync_service_tickets_and_articles():
     # Mock FreshdeskClient
     mock_client = AsyncMock(spec=FreshdeskClient)
     
@@ -37,19 +37,33 @@ async def test_sync_service_tickets_and_articles():
     mock_entity_mapper.get_stats.return_value = {}
     
     # Mock IngestionService
+    # NOTE: SyncService는 성능을 위해 fetch_tickets_generator()를 사용하며,
+    # 이 경로는 FreshdeskClient.get_tickets(page=...)를 호출한다.
+    ticket_payload = {
+        "id": 1,
+        "subject": "Test Ticket",
+        "description_text": "Help me",
+        "status": 2,
+        "priority": 1,
+        "source": 1,
+        "created_at": "2023-01-01T00:00:00Z",
+        "updated_at": "2023-01-02T00:00:00Z",
+        "tags": ["urgent"],
+        "responder_id": 1001,
+        "requester_id": 2001,
+    }
+
+    async def get_tickets_side_effect(*, page: int, per_page: int, updated_since=None, include_fields=None):
+        if page == 1:
+            return [ticket_payload]
+        return []
+
+    mock_client.get_tickets.side_effect = get_tickets_side_effect
+
+    # 레거시 경로(fetch_tickets -> get_all_tickets)도 안전하게 동작하도록 값은 유지
     mock_client.get_all_tickets.return_value = [
         {
-            "id": 1,
-            "subject": "Test Ticket",
-            "description_text": "Help me",
-            "status": 2,
-            "priority": 1,
-            "source": 1,
-            "created_at": "2023-01-01T00:00:00Z",
-            "updated_at": "2023-01-02T00:00:00Z",
-            "tags": ["urgent"],
-            "responder_id": 1001,
-            "requester_id": 2001,
+            **ticket_payload,
         }
     ]
     mock_client.get_all_conversations.return_value = [
@@ -83,9 +97,11 @@ async def test_sync_service_tickets_and_articles():
             uploaded_docs.extend(docs)
         
         # Run sync
-        result = await service.sync(
-            options=SyncOptions(include_tickets=True, include_articles=True),
-            upload_callback=upload_callback
+        result = asyncio.run(
+            service.sync(
+                options=SyncOptions(include_tickets=True, include_articles=True),
+                upload_callback=upload_callback,
+            )
         )
         
         # Verify results

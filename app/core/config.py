@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     gemini_store_common: Optional[str] = None
     gemini_store_onboarding: Optional[str] = None
 
+    # Backward-compatible alias used in tests/legacy code
+    # (Prefer `gemini_store_common` going forward.)
+    gemini_common_store_name: Optional[str] = None
+
     # Freshdesk
     freshdesk_domain: Optional[str] = None
     freshdesk_api_key: Optional[str] = None

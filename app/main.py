@@ -44,6 +44,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
 allowed_origins = [
+    # Freshdesk custom app local dev (FDK)
+    "http://localhost:10001",
+    "http://127.0.0.1:10001",
     "http://localhost:3000",
     "http://localhost:3001",  # Onboarding frontend
     "http://localhost:3002",

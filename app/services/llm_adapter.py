@@ -14,6 +14,150 @@ from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+
+def _build_nested_leaf_paths(choices: Any) -> List[List[str]]:
+    """Build all valid paths from Freshdesk nested_field 'choices'.
+
+    Freshdesk nested_field choices can be a mixed structure:
+    - dict: {L1: {L2: [L3, ...]}} or {L1: {}}
+    - list: [L3, ...] or [] (meaning leaf ends at current level)
+
+    Returns a list of paths (each path is list[str]), where the leaf is the last element.
+    """
+
+    paths: List[List[str]] = []
+
+    def walk(node: Any, prefix: List[str]) -> None:
+        if node is None:
+            return
+
+        if isinstance(node, dict):
+            if not node:
+                # Leaf ends at current prefix (e.g., L1 leaf)
+                if prefix:
+                    paths.append(prefix)
+                return
+            for k, v in node.items():
+                walk(v, prefix + [str(k)])
+            return
+
+        if isinstance(node, list):
+            if len(node) == 0:
+                # Leaf ends at current prefix (e.g., L2 leaf)
+                if prefix:
+                    paths.append(prefix)
+                return
+            for item in node:
+                paths.append(prefix + [str(item)])
+            return
+
+        # Fallback: treat scalar as leaf
+        paths.append(prefix + [str(node)])
+
+    walk(choices, [])
+    # Remove duplicates while preserving order
+    seen = set()
+    uniq: List[List[str]] = []
+    for p in paths:
+        key = tuple(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(p)
+    return uniq
+
+
+def _pick_best_nested_path(subject: str, description: str, paths: List[List[str]]) -> Optional[List[str]]:
+    """Pick the best matching nested path using simple rules + substring match.
+
+    This exists to prevent obvious misclassification like Freshdesk tickets -> Splashtop.
+    """
+    text = f"{subject}\n{description}".lower()
+    if not text.strip() or not paths:
+        return None
+
+    # Helper: find a path containing a specific leaf or segment.
+    def find_path_containing(token: str) -> Optional[List[str]]:
+        tok = token.lower()
+        candidates = [p for p in paths if any(seg.lower() == tok for seg in p)]
+        if not candidates:
+            return None
+        # Prefer longer (more specific) paths
+        candidates.sort(key=lambda p: (len(p), sum(len(s) for s in p)), reverse=True)
+        return candidates[0]
+
+    # Strong keyword rules (Korean/English synonyms)
+    # Freshdesk (헬프데스크/티켓 필드/포털 등)
+    if any(k in text for k in ["freshdesk", "헬프데스크", "helpdesk", "ticket field", "티켓 필드", "언어 관리", "번역", "yml", "yaml"]):
+        # Try to map to Freshworks Suite > Freshdesk
+        p = find_path_containing("Freshdesk")
+        if p:
+            return p
+
+    if any(k in text for k in ["freshservice"]):
+        p = find_path_containing("Freshservice")
+        if p:
+            return p
+
+    if any(k in text for k in ["freshsales"]):
+        p = find_path_containing("Freshsales (Suite)") or find_path_containing("Freshsales")
+        if p:
+            return p
+
+    if any(k in text for k in ["freshchat", "freddy", "bot", "프레디", "챗봇"]):
+        p = find_path_containing("Freshchat/Freddy Bot")
+        if p:
+            return p
+
+    if "splashtop" in text:
+        p = find_path_containing("Splashtop")
+        if p:
+            return p
+
+    if any(k in text for k in ["google workspace", "g suite", "gmail", "google drive", "구글", "지메일", "드라이브", "캘린더"]):
+        # Prefer most specific Google leaf if present
+        for leaf in ["Gmail", "Google Drive", "Google Calendar", "Control Panel", "Google Workspace"]:
+            p = find_path_containing(leaf)
+            if p:
+                return p
+
+    if any(k in text for k in ["spanning"]):
+        p = find_path_containing("Spanning Backup")
+        if p:
+            return p
+
+    # Generic: choose the longest leaf whose segment appears as substring
+    scored: List[tuple[int, int, List[str]]] = []
+    for p in paths:
+        leaf = p[-1].lower()
+        if leaf and leaf in text:
+            scored.append((len(leaf), len(p), p))
+    if scored:
+        scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+        return scored[0][2]
+
+    return None
+
+
+def _upsert_field_proposal(
+    proposals: List[Dict[str, Any]],
+    field_name: str,
+    field_label: str,
+    proposed_value: Any,
+    reason: str,
+) -> List[Dict[str, Any]]:
+    # Remove existing entries for same field_name
+    out = [p for p in proposals if p.get("field_name") != field_name]
+    out.append(
+        {
+            "field_name": field_name,
+            "field_label": field_label,
+            "proposed_value": proposed_value,
+            "reason": reason,
+        }
+    )
+    return out
+
 class LLMAdapter:
     def __init__(self):
         self.settings = get_settings()
@@ -101,7 +245,67 @@ class LLMAdapter:
             temperature=0.3,
             json_mode=True
         )
-        return json.loads(response)
+
+        result = json.loads(response)
+
+        # --- Post-processing: prevent mismatched nested field suggestions ---
+        try:
+            subject = (ticket_context.get("subject") or "")
+            description = (ticket_context.get("description") or ticket_context.get("description_text") or "")
+
+            # Find the first nested_field root (current UI supports one main nested field)
+            nested_roots = [f for f in ticket_fields if isinstance(f, dict) and f.get("type") == "nested_field"]
+            if nested_roots:
+                root = nested_roots[0]
+                root_name = root.get("name")
+                root_label = root.get("label") or root.get("label_for_customers") or root_name
+                nested_fields = root.get("nested_ticket_fields") or []
+                level2 = next((nf for nf in nested_fields if nf.get("level") == 2), None)
+                level3 = next((nf for nf in nested_fields if nf.get("level") == 3), None)
+
+                paths = _build_nested_leaf_paths(root.get("choices"))
+                best = _pick_best_nested_path(subject, description, paths)
+
+                if best and root_name:
+                    proposals = result.get("field_proposals") or []
+                    if not isinstance(proposals, list):
+                        proposals = []
+
+                    reason = "티켓 내용의 키워드와 중첩 필드 선택지 트리를 기반으로 카테고리를 보정했습니다."
+
+                    # Always set root (level1)
+                    proposals = _upsert_field_proposal(
+                        proposals,
+                        field_name=root_name,
+                        field_label=str(root_label),
+                        proposed_value=best[0],
+                        reason=reason,
+                    )
+
+                    # Optionally set level2/level3
+                    if level2 and len(best) >= 2:
+                        proposals = _upsert_field_proposal(
+                            proposals,
+                            field_name=str(level2.get("name")),
+                            field_label=str(level2.get("label") or level2.get("label_in_portal") or level2.get("name")),
+                            proposed_value=best[1],
+                            reason=reason,
+                        )
+                    if level3 and len(best) >= 3:
+                        proposals = _upsert_field_proposal(
+                            proposals,
+                            field_name=str(level3.get("name")),
+                            field_label=str(level3.get("label") or level3.get("label_in_portal") or level3.get("name")),
+                            proposed_value=best[2],
+                            reason=reason,
+                        )
+
+                    result["field_proposals"] = proposals
+
+        except Exception as e:
+            logger.warning(f"Nested field post-processing skipped due to error: {e}")
+
+        return result
 
     async def propose_solution(
         self, 

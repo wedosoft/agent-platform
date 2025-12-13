@@ -18,7 +18,7 @@ import time
 import uuid
 from typing import Any, AsyncGenerator, Dict, Optional, List
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, Header, HTTPException, status, BackgroundTasks, Query
 from fastapi.responses import StreamingResponse
 
 from app.models.assist import (
@@ -35,10 +35,40 @@ from app.agents.retriever import retrieve_context
 from app.agents.analyzer import analyze_ticket as analyze_ticket_agent
 from app.agents.synthesizer import synthesize_results
 from app.repositories.proposal_repository import ProposalRepository, get_proposal_repository
+from app.services.tenant_ticket_fields_cache import TenantTicketFieldsCache, get_tenant_ticket_fields_cache
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/assist", tags=["assist"])
+
+
+@router.get("/ticket-fields")
+async def get_freshdesk_ticket_fields(
+    force_refresh: bool = Query(False, alias="forceRefresh"),
+    x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
+    x_freshdesk_domain: str = Header(..., alias="X-Freshdesk-Domain"),
+    x_freshdesk_api_key: str = Header(..., alias="X-Freshdesk-API-Key"),
+    cache: TenantTicketFieldsCache = Depends(get_tenant_ticket_fields_cache),
+):
+    """Freshdesk 티켓 필드 정의(/ticket_fields)를 캐시 기반으로 반환.
+
+    - Supabase 캐시(hit): 빠르게 반환
+    - 캐시 miss/만료 또는 forceRefresh=true: Freshdesk에서 재수집 후 Supabase에 upsert
+
+    반환 형식은 프론트에서 바로 쓰기 쉽도록 *배열(list)* 그대로 반환합니다.
+    """
+    if not x_freshdesk_domain or not x_freshdesk_api_key:
+        raise HTTPException(status_code=400, detail="X-Freshdesk-Domain/X-Freshdesk-API-Key headers are required")
+
+    result = await cache.get_or_refresh_freshdesk_ticket_fields(
+        tenant_slug=x_tenant_id,
+        freshdesk_domain=x_freshdesk_domain,
+        freshdesk_api_key=x_freshdesk_api_key,
+        platform="freshdesk",
+        force_refresh=force_refresh,
+    )
+
+    return result.ticket_fields
 
 # Initialize Graph
 agent_graph = build_graph()
@@ -261,6 +291,11 @@ async def run_progressive_stream(
     """
     proposal_id = str(uuid.uuid4())
 
+    t0 = time.perf_counter()
+    t_retrieve_done: Optional[float] = None
+    t_analyze_done: Optional[float] = None
+    t_synthesize_done: Optional[float] = None
+
     try:
         # 1. Started event
         yield {
@@ -269,6 +304,10 @@ async def run_progressive_stream(
         }
 
         state = initial_state.copy()
+
+        # Frontend can request fields-only mode to skip expensive synthesis.
+        ticket_ctx = state.get("ticket_context") or {}
+        fields_only = bool(ticket_ctx.get("fieldsOnly") or state.get("fields_only"))
 
         # 2. Parallel execution: retrieve + analyze
         # But we stream events as they complete
@@ -285,6 +324,7 @@ async def run_progressive_stream(
 
         # Wait for retrieve to complete first (usually faster when skipped)
         retrieve_result = await retrieve_task
+        t_retrieve_done = time.perf_counter()
 
         # Yield search results
         search_results = retrieve_result.get("search_results", {})
@@ -308,6 +348,7 @@ async def run_progressive_stream(
 
         # Wait for analyze to complete
         analyze_result = await analyze_task
+        t_analyze_done = time.perf_counter()
         analysis = analyze_result.get("analysis_result", {})
         state["analysis_result"] = analysis
 
@@ -326,28 +367,55 @@ async def run_progressive_stream(
             # Small delay for visual effect (optional)
             await asyncio.sleep(0.1)
 
-        # 4. Synthesize final proposal
+        # 4. Synthesize final proposal (optional)
         yield {
             "type": "synthesizing",
-            "data": {"message": "응답 생성 중..."}
+            "data": {"message": "최종 정리 중..." if fields_only else "응답 생성 중..."}
         }
 
-        synthesized = await synthesize_results(state)
-        proposal_data = synthesized.get("proposed_action", {})
-
-        # 5. Stream draft response
-        draft_response = proposal_data.get("draft_response", "")
-        if draft_response:
-            yield {
-                "type": "draft_response",
-                "data": {"text": draft_response}
+        proposal_data: Dict[str, Any]
+        if fields_only:
+            # Fast path: skip LLM synthesis stage. Keep shape compatible.
+            proposal_data = {
+                "draft_response": "",
+                "field_updates": {},
+                "field_proposals": field_proposals,
+                "confidence": "medium" if analysis else "low",
+                "mode": "fields_only",
+                "summary": analysis.get("summary"),
+                "intent": analysis.get("intent"),
+                "sentiment": analysis.get("sentiment"),
+                "key_entities": analysis.get("key_entities"),
+                "reasoning": "fieldsOnly=true (synthesis skipped)"
             }
+        else:
+            synthesized = await synthesize_results(state)
+            t_synthesize_done = time.perf_counter()
+            proposal_data = synthesized.get("proposed_action", {})
+
+            # 5. Stream draft response
+            draft_response = proposal_data.get("draft_response", "")
+            if draft_response:
+                yield {
+                    "type": "draft_response",
+                    "data": {"text": draft_response}
+                }
 
         # 6. Finalize and save proposal
         proposal_data["id"] = proposal_id
         proposal_data["tenantId"] = tenant_id
         proposal_data["ticketId"] = ticket_id
         proposal_data["status"] = "draft"
+
+        # Attach timing info
+        now = time.perf_counter()
+        timing_ms = {
+            "total": int((now - t0) * 1000),
+            "retrieve": int(((t_retrieve_done or now) - t0) * 1000) if t_retrieve_done else None,
+            "analyze": int(((t_analyze_done or now) - (t_retrieve_done or t0)) * 1000) if t_analyze_done else None,
+            "synthesize": int(((t_synthesize_done or now) - (t_analyze_done or t0)) * 1000) if (not fields_only and t_synthesize_done) else 0,
+        }
+        proposal_data["analysisTimeMs"] = timing_ms.get("total")
 
         await repo.save_proposal(proposal_id, proposal_data)
 
@@ -357,9 +425,17 @@ async def run_progressive_stream(
             "data": {
                 "proposal": proposal_data,
                 "analysis": analysis,
-                "search": search_results
+                "search": search_results,
+                "timingMs": timing_ms
             }
         }
+
+        logger.info(
+            "Progressive stream done (fields_only=%s) ticket=%s timing_ms=%s",
+            fields_only,
+            ticket_id,
+            timing_ms,
+        )
 
     except Exception as e:
         logger.error(f"Progressive stream failed: {e}", exc_info=True)

@@ -1,3 +1,5 @@
+import inspect
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.config import get_settings
@@ -5,6 +7,13 @@ from app.models.pipeline import PipelineStatusResponse, SyncRequest, SyncRespons
 from app.services.pipeline_client import PipelineClient, PipelineClientError, get_pipeline_client
 
 router = APIRouter(tags=["pipeline"])
+
+
+async def _maybe_await(value):
+    """Await the value if needed to support sync test doubles."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 def _handle_pipeline_error(exc: PipelineClientError) -> HTTPException:
@@ -37,10 +46,10 @@ def get_status() -> PipelineStatusResponse:
 
 
 @router.post("/sync", response_model=SyncResponse, response_model_by_alias=True)
-def trigger_sync(request: SyncRequest, pipeline: PipelineClient = Depends(get_pipeline_client)) -> SyncResponse:
+async def trigger_sync(request: SyncRequest, pipeline: PipelineClient = Depends(get_pipeline_client)) -> SyncResponse:
     payload = request.model_dump(by_alias=True, exclude_none=True)
     try:
-        result = pipeline.trigger_sync(payload)
+        result = await _maybe_await(pipeline.trigger_sync(payload))
     except PipelineClientError as exc:
         raise _handle_pipeline_error(exc)
     return SyncResponse.model_validate(result)

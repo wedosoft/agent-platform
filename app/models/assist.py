@@ -30,6 +30,7 @@ class AnalyzeRequest(BaseModel):
     ticket_fields: Optional[List[Dict[str, Any]]] = Field(default=None, alias="ticketFields")
     stream_progress: bool = Field(default=True, alias="streamProgress")
     async_mode: bool = Field(default=False, alias="asyncMode")
+    fields_only: bool = Field(default=False, alias="fieldsOnly")
 
 
 class ApproveRequest(BaseModel):
