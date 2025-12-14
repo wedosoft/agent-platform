@@ -17,8 +17,19 @@ async def analyze_ticket(state: AgentState) -> AgentState:
         llm_adapter = LLMAdapter()
         
         ticket_context = state.get("ticket_context", {})
+        response_tone = state.get("response_tone", "formal")
         
-        analysis_result = await llm_adapter.analyze_ticket(ticket_context)
+        analysis_result = await llm_adapter.analyze_ticket(ticket_context, response_tone=response_tone)
+        
+        # Filter field proposals based on selected_fields
+        selected_fields = state.get("selected_fields", [])
+        if selected_fields and "field_proposals" in analysis_result:
+            proposals = analysis_result["field_proposals"]
+            filtered_proposals = [
+                p for p in proposals 
+                if p.get("field_name") in selected_fields
+            ]
+            analysis_result["field_proposals"] = filtered_proposals
         
         state["analysis_result"] = analysis_result
         logger.info(f"Analysis complete: {analysis_result.get('intent')}")

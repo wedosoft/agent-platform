@@ -204,7 +204,7 @@ class LLMAdapter:
             logger.error(f"LLM Generation Error ({self.provider}): {e}")
             raise
 
-    async def analyze_ticket(self, ticket_context: Dict[str, Any]) -> Dict[str, Any]:
+    async def analyze_ticket(self, ticket_context: Dict[str, Any], response_tone: str = "formal") -> Dict[str, Any]:
         """Analyze ticket for intent, sentiment, summary, and field proposals"""
         
         # Handle both snake_case and camelCase keys (due to Pydantic aliases)
@@ -214,14 +214,14 @@ class LLMAdapter:
         You are an expert customer support analyzer. Analyze the ticket and return JSON with:
         - intent: (inquiry, complaint, request, technical_issue)
         - sentiment: (positive, neutral, negative, urgent)
-        - summary: 1-sentence summary in Korean
+        - summary: 1-sentence summary in Korean ({response_tone} tone)
         - key_entities: list of important entities
         - field_proposals: List of suggested field updates based on the provided schema.
           Each proposal must include:
           - field_name: The API name of the field (from schema)
           - field_label: The display label of the field
           - proposed_value: The value to set (must match schema choices if applicable)
-          - reason: A clear explanation in Korean why this value is proposed.
+          - reason: A clear explanation in Korean ({response_tone} tone) why this value is proposed.
 
         IMPORTANT: 
         - Only propose updates for fields defined in the 'ticket_fields_schema' below.

@@ -36,6 +36,7 @@ from app.agents.analyzer import analyze_ticket as analyze_ticket_agent
 from app.agents.synthesizer import synthesize_results
 from app.repositories.proposal_repository import ProposalRepository, get_proposal_repository
 from app.services.tenant_ticket_fields_cache import TenantTicketFieldsCache, get_tenant_ticket_fields_cache
+from app.services.admin_service import AdminService, get_admin_service
 
 logger = logging.getLogger(__name__)
 
@@ -162,16 +163,24 @@ async def analyze_ticket(
     x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
     x_freshdesk_domain: Optional[str] = Header(None, alias="X-Freshdesk-Domain"),
     x_freshdesk_api_key: Optional[str] = Header(None, alias="X-Freshdesk-API-Key"),
-    repo: ProposalRepository = Depends(get_proposal_repository)
+    repo: ProposalRepository = Depends(get_proposal_repository),
+    admin_service: AdminService = Depends(get_admin_service)
 ):
     """
     티켓 분석 및 AI 제안 생성 (LangGraph 기반)
     """
     logger.info(f"Analyze request for ticket {request.ticket_id} (Tenant: {x_tenant_id})")
 
+    # Fetch Tenant Config
+    tenant_config = await admin_service.get_tenant(x_tenant_id)
+    response_tone = tenant_config.response_tone if tenant_config else "formal"
+    selected_fields = tenant_config.selected_fields if tenant_config else []
+
     # Initial State
     initial_state = {
         "ticket_context": request.model_dump(by_alias=True),
+        "response_tone": response_tone,
+        "selected_fields": selected_fields,
         "tenant_config": {
             "tenant_id": x_tenant_id,
             "domain": x_freshdesk_domain,

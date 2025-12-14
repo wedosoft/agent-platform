@@ -37,6 +37,10 @@ class TenantConfig(BaseModel):
     sync_enabled: bool = Field(True, description="자동 동기화 활성화")
     sync_cron: str = Field("0 */6 * * *", description="동기화 크론 표현식 (기본: 6시간마다)")
 
+    # Copilot 설정
+    selected_fields: Optional[List[str]] = Field(default_factory=list, description="AI 제안 대상 필드 목록")
+    response_tone: str = Field("formal", description="AI 응답 톤 (formal, casual)")
+
     # 메타데이터
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -58,6 +62,8 @@ class TenantConfigCreate(BaseModel):
     llm_max_tokens: int = 1500
     sync_enabled: bool = True
     sync_cron: str = "0 */6 * * *"
+    selected_fields: Optional[List[str]] = None
+    response_tone: str = "formal"
 
 
 class TenantConfigUpdate(BaseModel):
@@ -73,6 +79,8 @@ class TenantConfigUpdate(BaseModel):
     llm_max_tokens: Optional[int] = None
     sync_enabled: Optional[bool] = None
     sync_cron: Optional[str] = None
+    selected_fields: Optional[List[str]] = None
+    response_tone: Optional[str] = None
 
 
 class TenantListResponse(BaseModel):

@@ -1,0 +1,31 @@
+
+      --------------------------------------
+      Error Stack:: "AxiosError: Request failed with status code 400\n\tat Oe (/Users/alan/.vscode/extensions/freshworksmarketplace.freddy-copilot-2.7.1/dist/extension.js:2:326899)\n\tat v.<anonymous> (/Users/alan/.vscode/extensions/freshworksmarketplace.freddy-copilot-2.7.1/dist/extension.js:2:338113)\n\tat v.emit (node:events:531:35)\n\tat v._processResponse (/Users/alan/.vscode/extensions/freshworksmarketplace.freddy-copilot-2.7.1/dist/extension.js:2:49484)\n\tat ClientRequest._onNativeResponse (/Users/alan/.vscode/extensions/freshworksmarketplace.freddy-copilot-2.7.1/dist/extension.js:2:44556)\n\tat Object.onceWrapper (node:events:634:26)\n\tat ClientRequest.emit (node:events:531:35)\n\tat HTTPParser.parserOnIncomingClient [as onIncoming] (node:_http_client:772:27)\n\tat HTTPParser.parserOnHeadersComplete (node:_http_common:122:17)\n\tat TLSSocket.socketOnData (node:_http_client:614:22)\n\tat TLSSocket.emit (node:events:519:28)\n\tat addChunk (node:internal/streams/readable:561:12)\n\tat readableAddChunkPushByteMode (node:internal/streams/readable:512:3)\n\tat Readable.push (node:internal/streams/readable:392:5)\n\tat TLSWrap.onStreamRead (node:internal/stream_base_commons:189:23)\n\tat TLSWrap.callbackTrampoline (node:internal/async_hooks:130:17)"
+      Error Message:: "Request failed with status code 400"
+      Error Name:: "AxiosError"
+      Request ID:: 1c2db207-c9a8-4cbc-8dc6-b4efddf99a26
+      Tokens Remaining:: 592182
+      Env:: release
+      API Route:: /api/v1/copilot/completions/platform/3
+      
+      
+
+      Timestamp:: Sun, 14 Dec 2025 04:45:42 GMT
+      Extension Version:: 2.7.1
+      --------------------------------------
+    
+      --------------------------------------
+      Error Stack:: "completions"
+      Error Message:: "Input exceeds the number of allowed tokens: 500. Please reduce the size of your query and try again. If error persists, please reachout to support."
+      
+      
+      
+      
+      
+      
+      
+
+      Timestamp:: Sun, 14 Dec 2025 04:45:42 GMT
+      Extension Version:: 2.7.1
+      --------------------------------------
+    

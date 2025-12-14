@@ -174,6 +174,39 @@ async def delete_tenant(
         )
 
 
+# =============================================================================
+# 테넌트 설정 (FDK 앱용)
+# =============================================================================
+
+@router.get("/config", response_model=TenantConfig)
+async def get_tenant_config(
+    x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
+    admin_service: AdminService = Depends(get_admin_service),
+):
+    """
+    현재 테넌트 설정 조회 (FDK 앱용)
+    """
+    tenant = await admin_service.get_tenant(x_tenant_id)
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return tenant
+
+
+@router.put("/config", response_model=TenantConfig)
+async def update_tenant_config(
+    config: TenantConfigUpdate,
+    x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
+    admin_service: AdminService = Depends(get_admin_service),
+):
+    """
+    현재 테넌트 설정 업데이트 (FDK 앱용)
+    """
+    try:
+        return await admin_service.update_tenant(x_tenant_id, config)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @router.get("/tenants/{tenant_id}/stats", response_model=TenantStats)
 async def get_tenant_stats(
     tenant_id: str,
