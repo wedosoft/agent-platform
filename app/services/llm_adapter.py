@@ -313,13 +313,14 @@ class LLMAdapter:
         search_results: Dict[str, Any],
         analysis_result: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Generate draft response and field updates"""
+        """Generate solution analysis and field updates"""
         system_prompt = """
         You are a helpful support agent. Based on the ticket and search results, 
-        generate a response draft and suggest field updates.
+        analyze the root cause and provide a solution.
         
         Return JSON with:
-        - draft_response: Polite, helpful response in Korean
+        - cause: The root cause of the issue in Korean (1-2 sentences)
+        - solution: A brief solution or next steps in Korean (bullet points allowed)
         - field_updates: { priority, status, type, tags } (only if changes needed)
         - reasoning: Why you made these suggestions
         """

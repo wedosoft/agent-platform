@@ -75,7 +75,8 @@ async def synthesize_results(state: AgentState) -> AgentState:
 
         # Create fallback proposal
         state["proposed_action"] = {
-            "draft_response": "",
+            "cause": "",
+            "solution": "",
             "field_updates": {},
             "field_proposals": state.get("analysis_result", {}).get("field_proposals", []),
             "confidence": "low",

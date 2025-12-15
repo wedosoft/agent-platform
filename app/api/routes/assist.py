@@ -268,8 +268,16 @@ async def run_agent_stream(
                         "type": "proposal",
                         "data": proposal_data
                     }
+                    
+                    # Keep proposal data for complete event
+                    final_state["proposed_action"] = proposal_data
 
-        yield {"type": "complete", "data": {"status": "done"}}
+        # Ensure we have the final proposal data
+        final_proposal = final_state.get("proposed_action", {})
+        if not final_proposal and "proposed_action" in final_state:
+             final_proposal = final_state["proposed_action"]
+             
+        yield {"type": "complete", "data": final_proposal if final_proposal else {"status": "done"}}
 
     except Exception as e:
         logger.error(f"Agent execution failed: {e}")

@@ -43,29 +43,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
-allowed_origins = [
-    # Freshdesk custom app local dev (FDK)
-    "http://localhost:10001",
-    "http://127.0.0.1:10001",
-    "http://localhost:3000",
-    "http://localhost:3001",  # Onboarding frontend
-    "http://localhost:3002",
-    "http://localhost:3003",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:3001",
-    "http://127.0.0.1:4173",  # Playwright test
-    "http://localhost:4173",
-    "https://localhost:3000",
-    "https://ameer-timberless-paragogically.ngrok-free.dev",
-    "https://www.wedosoft.net",
-    "https://onboarding.wedosoft.net",
-    "https://onboarding-three-pi.vercel.app",
-    "https://onboarding-alans-projects-c08c24fe.vercel.app",
-]
-
+# CORS 설정 수정: FDK 로컬 개발 환경 및 ngrok 지원
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=[
+        "http://localhost:10001",  # FDK Local
+        "http://localhost:8000",   # Backend Local
+        "http://localhost:3000",
+        "http://localhost:3001",
+    ],
+    allow_origin_regex="https?://.*",  # 모든 Origin 허용 (개발 편의성)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
