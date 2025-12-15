@@ -30,6 +30,13 @@ async def analyze_ticket(state: AgentState) -> AgentState:
                 if p.get("field_name") in selected_fields
             ]
             analysis_result["field_proposals"] = filtered_proposals
+
+        # Always remove `source` proposals (frontend에서 제외 요구)
+        if "field_proposals" in analysis_result and isinstance(analysis_result.get("field_proposals"), list):
+            analysis_result["field_proposals"] = [
+                p for p in analysis_result["field_proposals"]
+                if p.get("field_name") != "source"
+            ]
         
         state["analysis_result"] = analysis_result
         logger.info(f"Analysis complete: {analysis_result.get('intent')}")

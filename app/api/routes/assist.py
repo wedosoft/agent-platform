@@ -37,10 +37,78 @@ from app.agents.synthesizer import synthesize_results
 from app.repositories.proposal_repository import ProposalRepository, get_proposal_repository
 from app.services.tenant_ticket_fields_cache import TenantTicketFieldsCache, get_tenant_ticket_fields_cache
 from app.services.admin_service import AdminService, get_admin_service
+from app.services.freshdesk_client import FreshdeskClient
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/assist", tags=["assist"])
+
+
+# =============================================================================
+# Ticket Conversations Enrichment (Freshdesk per_page=30 pagination)
+# =============================================================================
+
+_CONVERSATIONS_CACHE: Dict[tuple[str, str], tuple[float, List[Dict[str, Any]]]] = {}
+_CONVERSATIONS_CACHE_TTL_S = 60.0
+
+
+def _normalize_conversation_for_llm(conv: Dict[str, Any]) -> Dict[str, Any]:
+    """LLM 입력용으로 대화 데이터를 축약/정규화."""
+    body = (conv.get("body_text") or "").strip()
+    # 너무 길면 잘라냄 (토큰 폭증 방지)
+    if len(body) > 2000:
+        body = body[:2000] + "…"
+
+    return {
+        "body_text": body,
+        "incoming": conv.get("incoming"),
+        "private": conv.get("private"),
+        "created_at": conv.get("created_at"),
+        "user_id": conv.get("user_id"),
+    }
+
+
+async def _enrich_ticket_context_with_conversations(
+    ticket_context: Dict[str, Any],
+    *,
+    freshdesk_domain: Optional[str],
+    freshdesk_api_key: Optional[str],
+    tenant_id: str,
+) -> Dict[str, Any]:
+    """ticket_context에 conversations를 추가.
+
+    - Freshdesk conversations는 페이지당 30개 제한이 있으므로 서버에서 전체를 수집한다.
+    - 동일 티켓 반복 분석 시를 위해 짧은 TTL 캐시를 둔다.
+    """
+    if not freshdesk_domain or not freshdesk_api_key:
+        return ticket_context
+
+    ticket_id_raw = ticket_context.get("ticketId") or ticket_context.get("ticket_id")
+    if not ticket_id_raw:
+        return ticket_context
+
+    try:
+        ticket_id_int = int(str(ticket_id_raw))
+    except ValueError:
+        return ticket_context
+
+    cache_key = (tenant_id, str(ticket_id_int))
+    now = time.time()
+    cached = _CONVERSATIONS_CACHE.get(cache_key)
+    if cached and cached[0] > now:
+        conversations = cached[1]
+    else:
+        client = FreshdeskClient(domain=freshdesk_domain, api_key=freshdesk_api_key)
+        try:
+            conversations = await client.get_all_conversations(ticket_id_int)
+        finally:
+            await client.close()
+        _CONVERSATIONS_CACHE[cache_key] = (now + _CONVERSATIONS_CACHE_TTL_S, conversations)
+
+    normalized = [_normalize_conversation_for_llm(c) for c in conversations]
+    out = dict(ticket_context)
+    out["conversations"] = normalized
+    return out
 
 
 @router.get("/ticket-fields")
@@ -176,9 +244,18 @@ async def analyze_ticket(
     response_tone = tenant_config.response_tone if tenant_config else "formal"
     selected_fields = tenant_config.selected_fields if tenant_config else []
 
+    # Ticket context enrichment (include full conversations)
+    ticket_context = request.model_dump(by_alias=True)
+    ticket_context = await _enrich_ticket_context_with_conversations(
+        ticket_context,
+        freshdesk_domain=x_freshdesk_domain,
+        freshdesk_api_key=x_freshdesk_api_key,
+        tenant_id=x_tenant_id,
+    )
+
     # Initial State
     initial_state = {
-        "ticket_context": request.model_dump(by_alias=True),
+        "ticket_context": ticket_context,
         "response_tone": response_tone,
         "selected_fields": selected_fields,
         "tenant_config": {
@@ -482,8 +559,16 @@ async def analyze_ticket_stream(
     """
     logger.info(f"Stream analyze request for ticket {request.ticket_id} (Tenant: {x_tenant_id})")
 
+    ticket_context = request.model_dump(by_alias=True)
+    ticket_context = await _enrich_ticket_context_with_conversations(
+        ticket_context,
+        freshdesk_domain=x_freshdesk_domain,
+        freshdesk_api_key=x_freshdesk_api_key,
+        tenant_id=x_tenant_id,
+    )
+
     initial_state = {
-        "ticket_context": request.model_dump(by_alias=True),
+        "ticket_context": ticket_context,
         "tenant_config": {
             "tenant_id": x_tenant_id,
             "domain": x_freshdesk_domain,

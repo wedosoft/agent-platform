@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtualenv
+venv/
+.venv/
+ENV/
+
+# Tests & caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# VCS
+.git/
+.gitignore
+
+# Editor
+.vscode/
+.idea/
+
+# Logs
+*.log
+log/
+
+# Local env
+.env
+.env.*
+
+# Node (if present)
+node_modules/
+
+# Misc
+.DS_Store
+Thumbs.db

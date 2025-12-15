@@ -6,10 +6,6 @@
 		},
 		{
 			"path": "../project-a"
-		},
-		{
-			"name": "project-a-archived",
-			"path": "../project-a-archived"
 		}
 	],
 	"settings": {}

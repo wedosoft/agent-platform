@@ -9,6 +9,7 @@ from app.services import pipeline_client as pipeline_client_module
 from app.services import session_repository as session_repository_module
 from app.services.common_chat_handler import get_common_chat_handler
 from app.services.ticket_chat_handler import get_ticket_chat_handler
+from app.services.freshdesk_client import FreshdeskClient
 
 
 # Configure anyio to use only asyncio backend
@@ -128,3 +129,13 @@ def disable_ticket_chat_handler():
     app.dependency_overrides[get_ticket_chat_handler] = lambda: None
     yield
     app.dependency_overrides.pop(get_ticket_chat_handler, None)
+
+
+@pytest.fixture(autouse=True)
+def stub_freshdesk_conversations(monkeypatch):
+    """테스트에서 Freshdesk 네트워크 호출이 발생하지 않도록 기본 stub 처리."""
+
+    async def _stub_get_all_conversations(_self, _ticket_id: int):
+        return []
+
+    monkeypatch.setattr(FreshdeskClient, "get_all_conversations", _stub_get_all_conversations, raising=True)

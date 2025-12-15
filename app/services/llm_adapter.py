@@ -215,6 +215,10 @@ class LLMAdapter:
         - intent: (inquiry, complaint, request, technical_issue)
         - sentiment: (positive, neutral, negative, urgent)
         - summary: 1-sentence summary in Korean ({response_tone} tone)
+                - summary_sections: 2 to 3 sections for human agents to quickly understand the ticket.
+                    Each section must include:
+                    - title: short title in Korean
+                    - content: 1~3 sentences in Korean ({response_tone} tone)
         - key_entities: list of important entities
         - field_proposals: List of suggested field updates based on the provided schema.
           Each proposal must include:
@@ -247,6 +251,49 @@ class LLMAdapter:
         )
 
         result = json.loads(response)
+
+        # --- Ensure summary_sections exists (backward compatible with older prompts/models) ---
+        try:
+            sections = result.get("summary_sections") or result.get("summarySections")
+            if not isinstance(sections, list) or not sections:
+                raise ValueError("summary_sections missing")
+
+            normalized_sections = []
+            for s in sections:
+                if not isinstance(s, dict):
+                    continue
+                title = (s.get("title") or "").strip()
+                content = (s.get("content") or "").strip()
+                if not title or not content:
+                    continue
+                normalized_sections.append({"title": title, "content": content})
+
+            if len(normalized_sections) < 2:
+                raise ValueError("summary_sections insufficient")
+
+            result["summary_sections"] = normalized_sections[:3]
+
+        except Exception:
+            subject = str(ticket_context.get("subject") or "").strip()
+            description = str(ticket_context.get("description") or ticket_context.get("description_text") or "").strip()
+            summary = str(result.get("summary") or "").strip()
+            if not summary:
+                summary = subject or "티켓 요약을 생성하지 못했습니다."
+
+            desc_snippet = description
+            if len(desc_snippet) > 300:
+                desc_snippet = desc_snippet[:300] + "…"
+
+            result["summary_sections"] = [
+                {
+                    "title": "핵심 이슈",
+                    "content": summary,
+                },
+                {
+                    "title": "현재 상태",
+                    "content": desc_snippet or "설명(본문) 정보가 없습니다.",
+                },
+            ]
 
         # --- Post-processing: prevent mismatched nested field suggestions ---
         try:
@@ -315,14 +362,24 @@ class LLMAdapter:
     ) -> Dict[str, Any]:
         """Generate solution analysis and field updates"""
         system_prompt = """
-        You are a helpful support agent. Based on the ticket and search results, 
-        analyze the root cause and provide a solution.
-        
+        You are an expert customer support engineer.
+
+        Your job:
+        - Read the ticket AND its full conversations (if present) and derive an evidence-based root cause and next steps.
+
+        Hard rules (must follow):
+        1) Use ONLY information that appears in the provided context (ticket + conversations + similar cases + kb).
+           Do NOT invent a root cause or a fix.
+        2) If the evidence is insufficient, say so explicitly and provide concrete follow-up questions/checks.
+        3) When you mention a cause or a step, reference what part of the conversations supports it
+           (e.g., "대화에서 고객이 '...'라고 말함", "에러 로그/증상", "시도한 조치").
+        4) Prefer actionable steps, ordered, with expected outcome and what to do if it fails.
+
         Return JSON with:
-        - cause: The root cause of the issue in Korean (1-2 sentences)
-        - solution: A brief solution or next steps in Korean (bullet points allowed)
-        - field_updates: { priority, status, type, tags } (only if changes needed)
-        - reasoning: Why you made these suggestions
+        - cause: Root cause hypothesis grounded in the context (1-3 sentences in Korean)
+        - solution: Next steps in Korean (bullet points allowed). Include verification steps.
+        - field_updates: { priority, status, type, tags } (only if changes are truly needed)
+        - reasoning: Brief evidence-based justification in Korean (cite conversation evidence)
         """
         
         context = {
