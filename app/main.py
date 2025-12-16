@@ -1,5 +1,6 @@
 import os
 import logging
+import warnings
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,6 +25,23 @@ logging.getLogger("app").setLevel(settings.log_level)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("hpack").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+logging.getLogger("openai").setLevel(logging.WARNING)
+
+
+# Silence noisy Pydantic warnings (keep logs readable during perf debugging)
+try:
+    # Pydantic v2 warning class
+    from pydantic.warnings import UnsupportedFieldAttributeWarning  # type: ignore
+
+    warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
+except Exception:
+    # Fallback by message match (safe even if class name changes)
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*UnsupportedFieldAttributeWarning.*",
+    )
 
 
 @asynccontextmanager

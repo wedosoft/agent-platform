@@ -223,17 +223,19 @@ class KBClient:
         limit: int = 10
     ) -> List[dict]:
         """전문 검색 (PostgreSQL tsvector)."""
+        # NOTE: postgrest-py(supabase 2.x)에서 `.text_search()`는 `SyncQueryRequestBuilder`를 반환해
+        # `.limit()` 체이닝이 불가하므로, limit/range는 text_search 이전에 적용해야 한다.
         builder = self.client.table('kb_documents') \
             .select('id, csv_id, title_ko, title_en, content_text_ko, short_slug, product') \
-            .eq('published', True) \
-            .text_search('search_vector_ko', query.strip(), {
-                'type': 'plain',
-                'config': 'simple'
-            }) \
-            .limit(limit)
+            .eq('published', True)
 
         if product_filter:
             builder = builder.eq('product', product_filter)
+
+        builder = builder.limit(limit).text_search('search_vector_ko', query.strip(), {
+            'type': 'plain',
+            'config': 'simple'
+        })
 
         result = builder.execute()
         return result.data or []

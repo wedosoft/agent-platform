@@ -94,9 +94,13 @@ async def _enrich_ticket_context_with_conversations(
 
     cache_key = (tenant_id, str(ticket_id_int))
     now = time.time()
+    t0 = time.perf_counter()
+    cache_hit = False
+
     cached = _CONVERSATIONS_CACHE.get(cache_key)
     if cached and cached[0] > now:
         conversations = cached[1]
+        cache_hit = True
     else:
         client = FreshdeskClient(domain=freshdesk_domain, api_key=freshdesk_api_key)
         try:
@@ -108,6 +112,17 @@ async def _enrich_ticket_context_with_conversations(
     normalized = [_normalize_conversation_for_llm(c) for c in conversations]
     out = dict(ticket_context)
     out["conversations"] = normalized
+
+    # NOTE: This happens before SSE 'started' event in /assist/analyze/stream.
+    # Keep this log compact to make perf bottlenecks obvious.
+    logger.info(
+        "Conversations enriched tenant=%s ticket=%s count=%s cache_hit=%s ms=%s",
+        tenant_id,
+        ticket_id_int,
+        len(normalized),
+        cache_hit,
+        int((time.perf_counter() - t0) * 1000),
+    )
     return out
 
 
@@ -403,36 +418,43 @@ async def run_progressive_stream(
         ticket_ctx = state.get("ticket_context") or {}
         fields_only = bool(ticket_ctx.get("fieldsOnly") or state.get("fields_only"))
 
-        # 2. Parallel execution: retrieve + analyze
-        # But we stream events as they complete
+        # 2. Execution
+        # - fieldsOnly: 필드 제안만 필요하므로 검색(retrieve) 자체를 생략한다.
+        # - normal: retrieve + analyze 병렬 실행
 
-        # Create tasks for parallel execution
-        retrieve_task = asyncio.create_task(retrieve_context(state.copy()))
         analyze_task = asyncio.create_task(analyze_ticket_agent(state.copy()))
 
-        # Yield searching status
-        yield {
-            "type": "searching",
-            "data": {"message": "관련 문서 검색 중..."}
-        }
+        if not fields_only:
+            retrieve_task = asyncio.create_task(retrieve_context(state.copy()))
 
-        # Wait for retrieve to complete first (usually faster when skipped)
-        retrieve_result = await retrieve_task
-        t_retrieve_done = time.perf_counter()
-
-        # Yield search results
-        search_results = retrieve_result.get("search_results", {})
-        state["search_results"] = search_results
-        state["metadata"] = retrieve_result.get("metadata", {})
-
-        yield {
-            "type": "search_result",
-            "data": {
-                "similarCases": search_results.get("similar_cases", []),
-                "kbArticles": search_results.get("kb_procedures", []),
-                "totalResults": search_results.get("total_results", 0)
+            # Yield searching status
+            yield {
+                "type": "searching",
+                "data": {"message": "관련 문서 검색 중..."}
             }
-        }
+
+            # Wait for retrieve to complete first
+            retrieve_result = await retrieve_task
+            t_retrieve_done = time.perf_counter()
+
+            # Yield search results
+            search_results = retrieve_result.get("search_results", {})
+            state["search_results"] = search_results
+            state["metadata"] = retrieve_result.get("metadata", {})
+
+            yield {
+                "type": "search_result",
+                "data": {
+                    "similarCases": search_results.get("similar_cases", []),
+                    "kbArticles": search_results.get("kb_procedures", []),
+                    "totalResults": search_results.get("total_results", 0)
+                }
+            }
+        else:
+            # Emit an empty search result for shape compatibility
+            search_results = {}
+            state["search_results"] = search_results
+            t_retrieve_done = t0
 
         # Yield analyzing status
         yield {
@@ -560,12 +582,15 @@ async def analyze_ticket_stream(
     logger.info(f"Stream analyze request for ticket {request.ticket_id} (Tenant: {x_tenant_id})")
 
     ticket_context = request.model_dump(by_alias=True)
-    ticket_context = await _enrich_ticket_context_with_conversations(
-        ticket_context,
-        freshdesk_domain=x_freshdesk_domain,
-        freshdesk_api_key=x_freshdesk_api_key,
-        tenant_id=x_tenant_id,
-    )
+
+    # fieldsOnly 모드에서는 대화 전체 수집(페이지네이션)이 병목이 될 수 있어 기본적으로 생략한다.
+    if not bool(ticket_context.get("fieldsOnly")):
+        ticket_context = await _enrich_ticket_context_with_conversations(
+            ticket_context,
+            freshdesk_domain=x_freshdesk_domain,
+            freshdesk_api_key=x_freshdesk_api_key,
+            tenant_id=x_tenant_id,
+        )
 
     initial_state = {
         "ticket_context": ticket_context,
@@ -584,6 +609,76 @@ async def analyze_ticket_stream(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no"  # Disable nginx buffering
         }
+    )
+
+
+@router.post("/field-proposals")
+async def propose_fields_only(
+    request: AnalyzeRequest,
+    x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
+):
+    """필드 제안만 생성하는 경량 엔드포인트.
+
+    - LLM 1회(필드 제안 전용)만 호출
+    - conversations 수집/검색/합성 단계 생략
+    """
+    t0 = time.perf_counter()
+    ticket_context = request.model_dump(by_alias=True)
+    ticket_context["fieldsOnly"] = True
+
+    # Directly run analyzer (no graph)
+    state = {"ticket_context": ticket_context, "fields_only": True}
+    analyzed = await analyze_ticket_agent(state)
+    analysis = analyzed.get("analysis_result", {})
+
+    field_proposals = analysis.get("field_proposals", []) if isinstance(analysis, dict) else []
+
+    return {
+        "fieldProposals": field_proposals,
+        "analysis": analysis,
+        "timingMs": {
+            "total": int((time.perf_counter() - t0) * 1000),
+        },
+    }
+
+
+@router.post("/field-proposals/stream")
+async def propose_fields_only_stream(
+    request: AnalyzeRequest,
+    x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
+    x_freshdesk_domain: Optional[str] = Header(None, alias="X-Freshdesk-Domain"),
+    x_freshdesk_api_key: Optional[str] = Header(None, alias="X-Freshdesk-API-Key"),
+    repo: ProposalRepository = Depends(get_proposal_repository),
+):
+    """필드 제안만 스트리밍하는 전용 SSE 엔드포인트.
+
+    - fieldsOnly=true 강제
+    - conversations 수집 기본 생략(병목 방지)
+    - retrieve/synthesize 생략(run_progressive_stream 내부 최적화 적용)
+    """
+    logger.info(f"Stream field-proposals request for ticket {request.ticket_id} (Tenant: {x_tenant_id})")
+
+    ticket_context = request.model_dump(by_alias=True)
+    ticket_context["fieldsOnly"] = True
+
+    initial_state = {
+        "ticket_context": ticket_context,
+        "tenant_config": {
+            "tenant_id": x_tenant_id,
+            "domain": x_freshdesk_domain,
+            "api_key": x_freshdesk_api_key,
+        },
+        "fields_only": True,
+    }
+
+    return StreamingResponse(
+        sse_generator(run_progressive_stream(initial_state, repo, x_tenant_id, request.ticket_id)),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 async def build_analyze_response(

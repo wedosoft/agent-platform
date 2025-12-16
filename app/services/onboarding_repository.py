@@ -35,6 +35,8 @@ class OnboardingRepository:
 
     def __init__(self, client: Client) -> None:
         self.client = client
+        # Backward-compatible alias: 일부 라우트/레거시 코드에서 repo.supabase를 참조함.
+        self.supabase = client
 
     # ============================================
     # 세션 관리

@@ -18,8 +18,18 @@ async def analyze_ticket(state: AgentState) -> AgentState:
         
         ticket_context = state.get("ticket_context", {})
         response_tone = state.get("response_tone", "formal")
-        
-        analysis_result = await llm_adapter.analyze_ticket(ticket_context, response_tone=response_tone)
+
+        fields_only = bool(
+            (ticket_context or {}).get("fieldsOnly")
+            or state.get("fields_only")
+            or state.get("fieldsOnly")
+        )
+
+        if fields_only:
+            # Field proposals only (fast path)
+            analysis_result = await llm_adapter.propose_fields_only(ticket_context, response_tone=response_tone)
+        else:
+            analysis_result = await llm_adapter.analyze_ticket(ticket_context, response_tone=response_tone)
         
         # Filter field proposals based on selected_fields
         selected_fields = state.get("selected_fields", [])

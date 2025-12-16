@@ -8,6 +8,7 @@ import logging
 from typing import Optional, Dict, Any, List
 import json
 import httpx
+import time
 from openai import AsyncOpenAI
 
 from app.core.config import get_settings
@@ -158,6 +159,134 @@ def _upsert_field_proposal(
     )
     return out
 
+
+def _compact_ticket_fields_for_llm(
+    ticket_fields: List[Dict[str, Any]],
+    *,
+    max_fields: int = 50,
+    max_choices: int = 80,
+    exclude_nested_fields: bool = True,
+) -> List[Dict[str, Any]]:
+    """Reduce Freshdesk ticket fields schema for LLM input.
+
+    목적: 토큰/지연 폭증을 막기 위해 "필드 제안"에 필요한 최소 정보만 전달.
+
+    - nested_field는 선택지 트리가 매우 커질 수 있어 기본적으로 LLM 입력에서 제외한다.
+      (nested_field는 별도 규칙 기반 후처리로 제안)
+    - 각 필드의 choices는 상한을 둔다.
+    """
+    if not ticket_fields:
+        return []
+
+    out: List[Dict[str, Any]] = []
+
+    for f in ticket_fields:
+        if not isinstance(f, dict):
+            continue
+
+        f_type = f.get("type")
+        if exclude_nested_fields and f_type == "nested_field":
+            continue
+
+        item: Dict[str, Any] = {
+            "name": f.get("name"),
+            "label": f.get("label") or f.get("label_for_customers") or f.get("label_in_portal"),
+            "type": f_type,
+            "required": f.get("required"),
+        }
+
+        # Choices trimming (drop huge option lists)
+        choices = f.get("choices")
+        if isinstance(choices, list):
+            if len(choices) > max_choices:
+                item["choices"] = [str(x) for x in choices[:max_choices]]
+                item["choices_truncated"] = True
+            else:
+                item["choices"] = choices
+        elif isinstance(choices, dict):
+            keys = list(choices.keys())
+            if len(keys) > max_choices:
+                item["choices"] = {k: choices[k] for k in keys[:max_choices]}
+                item["choices_truncated"] = True
+            else:
+                item["choices"] = choices
+
+        out.append(item)
+
+        if len(out) >= max_fields:
+            break
+
+    return out
+
+
+def _postprocess_nested_field_proposals(
+    result: Dict[str, Any],
+    ticket_context: Dict[str, Any],
+    ticket_fields: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """규칙 기반으로 nested_field 제안을 보정/추가한다.
+
+    - LLM이 nested_field를 오분류하거나, 아예 제안하지 않은 경우를 보정한다.
+    - mixed-depth(카테고리만/서브까지만/아이템까지) 구조를 지원한다.
+    """
+    try:
+        subject = (ticket_context.get("subject") or "")
+        description = (ticket_context.get("description") or ticket_context.get("description_text") or "")
+
+        nested_roots = [f for f in ticket_fields if isinstance(f, dict) and f.get("type") == "nested_field"]
+        if not nested_roots:
+            return result
+
+        root = nested_roots[0]
+        root_name = root.get("name")
+        root_label = root.get("label") or root.get("label_for_customers") or root_name
+        nested_fields = root.get("nested_ticket_fields") or []
+        level2 = next((nf for nf in nested_fields if nf.get("level") == 2), None)
+        level3 = next((nf for nf in nested_fields if nf.get("level") == 3), None)
+
+        paths = _build_nested_leaf_paths(root.get("choices"))
+        best = _pick_best_nested_path(subject, description, paths)
+        if not (best and root_name):
+            return result
+
+        proposals = result.get("field_proposals") or []
+        if not isinstance(proposals, list):
+            proposals = []
+
+        reason = "티켓 내용의 키워드와 중첩 필드 선택지 트리를 기반으로 카테고리를 보정했습니다."
+
+        proposals = _upsert_field_proposal(
+            proposals,
+            field_name=str(root_name),
+            field_label=str(root_label),
+            proposed_value=best[0],
+            reason=reason,
+        )
+
+        if level2 and len(best) >= 2:
+            proposals = _upsert_field_proposal(
+                proposals,
+                field_name=str(level2.get("name")),
+                field_label=str(level2.get("label") or level2.get("label_in_portal") or level2.get("name")),
+                proposed_value=best[1],
+                reason=reason,
+            )
+        if level3 and len(best) >= 3:
+            proposals = _upsert_field_proposal(
+                proposals,
+                field_name=str(level3.get("name")),
+                field_label=str(level3.get("label") or level3.get("label_in_portal") or level3.get("name")),
+                proposed_value=best[2],
+                reason=reason,
+            )
+
+        result["field_proposals"] = proposals
+        return result
+
+    except Exception as e:
+        logger.warning(f"Nested field post-processing skipped due to error: {e}")
+        return result
+
 class LLMAdapter:
     def __init__(self):
         self.settings = get_settings()
@@ -210,6 +339,8 @@ class LLMAdapter:
         # Handle both snake_case and camelCase keys (due to Pydantic aliases)
         ticket_fields = ticket_context.get("ticket_fields") or ticket_context.get("ticketFields") or []
         
+        # NOTE: analyze_ticket는 intent/summary까지 포함하므로 프롬프트가 크다.
+        #       field-only 사용 시에는 propose_fields_only()를 사용하자.
         system_prompt = f"""
         You are an expert customer support analyzer. Analyze the ticket and return JSON with:
         - intent: (inquiry, complaint, request, technical_issue)
@@ -242,12 +373,23 @@ class LLMAdapter:
         context_copy.pop("ticketFields", None)
         
         user_prompt = json.dumps(context_copy, ensure_ascii=False)
-        
+
+        t0 = time.perf_counter()
         response = await self.generate(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.3,
             json_mode=True
+        )
+
+        logger.info(
+            "LLM done purpose=analyze_ticket provider=%s model=%s json_mode=%s sys_chars=%s user_chars=%s ms=%s",
+            self.provider,
+            self.model,
+            True,
+            len(system_prompt),
+            len(user_prompt),
+            int((time.perf_counter() - t0) * 1000),
         )
 
         result = json.loads(response)
@@ -295,63 +437,85 @@ class LLMAdapter:
                 },
             ]
 
-        # --- Post-processing: prevent mismatched nested field suggestions ---
-        try:
-            subject = (ticket_context.get("subject") or "")
-            description = (ticket_context.get("description") or ticket_context.get("description_text") or "")
+        result = _postprocess_nested_field_proposals(result, ticket_context, ticket_fields)
 
-            # Find the first nested_field root (current UI supports one main nested field)
-            nested_roots = [f for f in ticket_fields if isinstance(f, dict) and f.get("type") == "nested_field"]
-            if nested_roots:
-                root = nested_roots[0]
-                root_name = root.get("name")
-                root_label = root.get("label") or root.get("label_for_customers") or root_name
-                nested_fields = root.get("nested_ticket_fields") or []
-                level2 = next((nf for nf in nested_fields if nf.get("level") == 2), None)
-                level3 = next((nf for nf in nested_fields if nf.get("level") == 3), None)
+        return result
 
-                paths = _build_nested_leaf_paths(root.get("choices"))
-                best = _pick_best_nested_path(subject, description, paths)
+    async def propose_fields_only(self, ticket_context: Dict[str, Any], response_tone: str = "formal") -> Dict[str, Any]:
+        """필드 제안만(경량) 생성한다.
 
-                if best and root_name:
-                    proposals = result.get("field_proposals") or []
-                    if not isinstance(proposals, list):
-                        proposals = []
+        목표:
+        - LLM 호출을 1번으로 제한(analysis + synthesis 중 synthesis는 생략 가능)
+        - conversations/거대한 nested_field 트리/긴 choices로 인한 토큰 폭증을 줄인다.
+        """
 
-                    reason = "티켓 내용의 키워드와 중첩 필드 선택지 트리를 기반으로 카테고리를 보정했습니다."
+        # Handle both snake_case and camelCase keys
+        ticket_fields = ticket_context.get("ticket_fields") or ticket_context.get("ticketFields") or []
+        if not isinstance(ticket_fields, list):
+            ticket_fields = []
 
-                    # Always set root (level1)
-                    proposals = _upsert_field_proposal(
-                        proposals,
-                        field_name=root_name,
-                        field_label=str(root_label),
-                        proposed_value=best[0],
-                        reason=reason,
-                    )
+        compact_schema = _compact_ticket_fields_for_llm(
+            ticket_fields,
+            max_fields=60,
+            max_choices=80,
+            exclude_nested_fields=True,
+        )
 
-                    # Optionally set level2/level3
-                    if level2 and len(best) >= 2:
-                        proposals = _upsert_field_proposal(
-                            proposals,
-                            field_name=str(level2.get("name")),
-                            field_label=str(level2.get("label") or level2.get("label_in_portal") or level2.get("name")),
-                            proposed_value=best[1],
-                            reason=reason,
-                        )
-                    if level3 and len(best) >= 3:
-                        proposals = _upsert_field_proposal(
-                            proposals,
-                            field_name=str(level3.get("name")),
-                            field_label=str(level3.get("label") or level3.get("label_in_portal") or level3.get("name")),
-                            proposed_value=best[2],
-                            reason=reason,
-                        )
+        system_prompt = f"""
+        You are an expert customer support field classifier.
 
-                    result["field_proposals"] = proposals
+        Return JSON with ONLY:
+        - field_proposals: List of suggested field updates based on the provided schema.
+          Each proposal must include:
+          - field_name: The API name of the field (from schema)
+          - field_label: The display label of the field
+          - proposed_value: The value to set (must match schema choices if applicable)
+          - reason: A short explanation in Korean ({response_tone} tone)
 
-        except Exception as e:
-            logger.warning(f"Nested field post-processing skipped due to error: {e}")
+        Hard rules:
+        - Only propose updates for fields defined in 'ticket_fields_schema' below.
+        - Do NOT propose updates for nested_field here. (Nested fields are handled separately.)
+        - Keep reasons concise.
 
+        Ticket Fields Schema (compact):
+        {json.dumps(compact_schema, ensure_ascii=False)}
+        """
+
+        # Remove huge keys from user prompt
+        context_copy = dict(ticket_context)
+        context_copy.pop("ticket_fields", None)
+        context_copy.pop("ticketFields", None)
+        context_copy.pop("conversations", None)
+
+        user_prompt = json.dumps(context_copy, ensure_ascii=False)
+
+        t0 = time.perf_counter()
+        response = await self.generate(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.2,
+            json_mode=True,
+        )
+
+        logger.info(
+            "LLM done purpose=propose_fields_only provider=%s model=%s json_mode=%s sys_chars=%s user_chars=%s ms=%s",
+            self.provider,
+            self.model,
+            True,
+            len(system_prompt),
+            len(user_prompt),
+            int((time.perf_counter() - t0) * 1000),
+        )
+
+        result = json.loads(response)
+        # Ensure expected shape
+        if not isinstance(result, dict):
+            result = {}
+        if "field_proposals" not in result or not isinstance(result.get("field_proposals"), list):
+            result["field_proposals"] = []
+
+        # Add/override nested_field proposals via rules
+        result = _postprocess_nested_field_proposals(result, ticket_context, ticket_fields)
         return result
 
     async def propose_solution(
@@ -389,10 +553,22 @@ class LLMAdapter:
             "kb_articles": search_results.get("kb_procedures", [])
         }
         
+        user_prompt = json.dumps(context, ensure_ascii=False)
+        t0 = time.perf_counter()
         response = await self.generate(
             system_prompt=system_prompt,
-            user_prompt=json.dumps(context, ensure_ascii=False),
+            user_prompt=user_prompt,
             temperature=0.7,
             json_mode=True
+        )
+
+        logger.info(
+            "LLM done purpose=propose_solution provider=%s model=%s json_mode=%s sys_chars=%s user_chars=%s ms=%s",
+            self.provider,
+            self.model,
+            True,
+            len(system_prompt),
+            len(user_prompt),
+            int((time.perf_counter() - t0) * 1000),
         )
         return json.loads(response)
