@@ -571,7 +571,8 @@ async def analyze_ticket_stream(
     x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
     x_freshdesk_domain: Optional[str] = Header(None, alias="X-Freshdesk-Domain"),
     x_freshdesk_api_key: Optional[str] = Header(None, alias="X-Freshdesk-API-Key"),
-    repo: ProposalRepository = Depends(get_proposal_repository)
+    repo: ProposalRepository = Depends(get_proposal_repository),
+    admin_service: AdminService = Depends(get_admin_service),
 ):
     """
     티켓 분석 SSE 스트리밍 엔드포인트
@@ -598,8 +599,14 @@ async def analyze_ticket_stream(
             "tenant_id": x_tenant_id,
             "domain": x_freshdesk_domain,
             "api_key": x_freshdesk_api_key
-        }
+        },
     }
+
+    # 테넌트 설정(관리자에서 지정한 selected_fields/response_tone)을 주입
+    tenant = await admin_service.get_tenant(x_tenant_id)
+    if tenant:
+        initial_state["response_tone"] = tenant.response_tone or "formal"
+        initial_state["selected_fields"] = tenant.selected_fields or []
 
     return StreamingResponse(
         sse_generator(run_progressive_stream(initial_state, repo, x_tenant_id, request.ticket_id)),
@@ -616,6 +623,7 @@ async def analyze_ticket_stream(
 async def propose_fields_only(
     request: AnalyzeRequest,
     x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
+    admin_service: AdminService = Depends(get_admin_service),
 ):
     """필드 제안만 생성하는 경량 엔드포인트.
 
@@ -627,7 +635,13 @@ async def propose_fields_only(
     ticket_context["fieldsOnly"] = True
 
     # Directly run analyzer (no graph)
-    state = {"ticket_context": ticket_context, "fields_only": True}
+    state: Dict[str, Any] = {"ticket_context": ticket_context, "fields_only": True}
+
+    tenant = await admin_service.get_tenant(x_tenant_id)
+    if tenant:
+        state["response_tone"] = tenant.response_tone or "formal"
+        state["selected_fields"] = tenant.selected_fields or []
+
     analyzed = await analyze_ticket_agent(state)
     analysis = analyzed.get("analysis_result", {})
 
@@ -649,6 +663,7 @@ async def propose_fields_only_stream(
     x_freshdesk_domain: Optional[str] = Header(None, alias="X-Freshdesk-Domain"),
     x_freshdesk_api_key: Optional[str] = Header(None, alias="X-Freshdesk-API-Key"),
     repo: ProposalRepository = Depends(get_proposal_repository),
+    admin_service: AdminService = Depends(get_admin_service),
 ):
     """필드 제안만 스트리밍하는 전용 SSE 엔드포인트.
 
@@ -670,6 +685,11 @@ async def propose_fields_only_stream(
         },
         "fields_only": True,
     }
+
+    tenant = await admin_service.get_tenant(x_tenant_id)
+    if tenant:
+        initial_state["response_tone"] = tenant.response_tone or "formal"
+        initial_state["selected_fields"] = tenant.selected_fields or []
 
     return StreamingResponse(
         sse_generator(run_progressive_stream(initial_state, repo, x_tenant_id, request.ticket_id)),

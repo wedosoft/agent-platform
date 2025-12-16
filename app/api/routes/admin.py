@@ -181,27 +181,56 @@ async def delete_tenant(
 @router.get("/config", response_model=TenantConfig)
 async def get_tenant_config(
     x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
+    x_freshdesk_domain: Optional[str] = Header(None, alias="X-Freshdesk-Domain"),
+    x_freshdesk_api_key: Optional[str] = Header(None, alias="X-Freshdesk-API-Key"),
     admin_service: AdminService = Depends(get_admin_service),
 ):
     """
     현재 테넌트 설정 조회 (FDK 앱용)
     """
     tenant = await admin_service.get_tenant(x_tenant_id)
-    if not tenant:
+    if tenant:
+        return tenant
+
+    # Upsert: 테넌트가 없으면 FDK 헤더 기반으로 기본 설정을 생성한다.
+    # (관리자 UI에서 선행 테넌트 생성 없이 설정 저장/조회 가능)
+    if not x_freshdesk_domain:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    return tenant
+
+    created = await admin_service.create_tenant(
+        TenantConfigCreate(
+            tenant_id=x_tenant_id,
+            freshdesk_domain=x_freshdesk_domain,
+            freshdesk_api_key=x_freshdesk_api_key or "",
+        )
+    )
+    return created
 
 
 @router.put("/config", response_model=TenantConfig)
 async def update_tenant_config(
     config: TenantConfigUpdate,
     x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
+    x_freshdesk_domain: Optional[str] = Header(None, alias="X-Freshdesk-Domain"),
+    x_freshdesk_api_key: Optional[str] = Header(None, alias="X-Freshdesk-API-Key"),
     admin_service: AdminService = Depends(get_admin_service),
 ):
     """
     현재 테넌트 설정 업데이트 (FDK 앱용)
     """
     try:
+        tenant = await admin_service.get_tenant(x_tenant_id)
+        if not tenant:
+            # Upsert: 없으면 생성 후 업데이트
+            if not x_freshdesk_domain:
+                raise HTTPException(status_code=404, detail="Tenant not found")
+            await admin_service.create_tenant(
+                TenantConfigCreate(
+                    tenant_id=x_tenant_id,
+                    freshdesk_domain=x_freshdesk_domain,
+                    freshdesk_api_key=x_freshdesk_api_key or "",
+                )
+            )
         return await admin_service.update_tenant(x_tenant_id, config)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
