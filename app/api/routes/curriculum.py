@@ -649,13 +649,35 @@ async def get_questions(
                     
                     if rag_stores:
                         search_client = _get_file_search_client()
-                        search_query = f"{module_name} {module_desc}"
+                        product_id = module.target_product_id if module else ""
+                        category_slug = module.kb_category_slug if module else None
+                        product_filters = _build_product_filters(product_id, category_slug) if product_id else None
+                        logger.info(
+                            "RAG quiz supplement: module=%s product=%s category=%s stores=%s filters_applied=%s",
+                            str(module_id),
+                            product_id,
+                            category_slug,
+                            rag_stores,
+                            bool(product_filters),
+                        )
+
+                        search_query = (
+                            f"[{product_id}] {module_name}\n"
+                            f"설명: {module_desc}\n"
+                            "위 모듈의 '자가 점검(퀴즈) 문항'을 만들기 위해 필요한 핵심 개념/절차를 문서 근거로 요약해 주세요. "
+                            "제품 범위를 벗어난 일반 온보딩/회사 정책/업무 규칙 내용은 제외하세요."
+                        )
                         
                         # 검색 수행 (요약 요청)
                         search_result = await search_client.search(
                             query=search_query,
                             store_names=rag_stores,
-                            system_instruction="Provide a detailed summary of the key concepts and procedures related to the topic, suitable for creating a quiz. Focus on factual information found in the documents."
+                            metadata_filters=product_filters,
+                            system_instruction=(
+                                f"당신은 {product_id} 제품의 '{module_name}' 모듈 퀴즈를 만드는 조교입니다. "
+                                "반드시 fileSearch로 찾은 문서의 사실만 요약하세요. "
+                                "회사 온보딩/정책/업무 규칙 등 제품 범위를 벗어나면 요약하지 말고 근거 부족으로 답할 수 없다고 말하세요."
+                            ),
                         )
                         
                         if search_result and search_result.get("text"):

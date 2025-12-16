@@ -70,6 +70,7 @@ class Settings(BaseSettings):
         env_prefix="",  # 프리픽스 없음 - GEMINI_*, SUPABASE_COMMON_* 직접 사용
         env_file=(".env", ".env.local"),
         env_file_encoding="utf-8",
+        extra="ignore",  # 프론트/Vite 등 다른 프로젝트의 환경변수는 무시
     )
 
     @field_validator("supabase_common_languages", mode="before")
