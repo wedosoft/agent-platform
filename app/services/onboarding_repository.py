@@ -67,7 +67,7 @@ class OnboardingRepository:
             raise OnboardingRepositoryError(str(e)) from e
 
     async def get_session(self, session_id: str) -> Optional[OnboardingSession]:
-        """세션 조회."""
+        """세션 ID로 세션 조회."""
         try:
             response = (
                 self.client.table(TABLE_SESSIONS)
@@ -88,6 +88,31 @@ class OnboardingRepository:
             return None
         except Exception as e:
             LOGGER.error(f"Failed to get onboarding session: {e}")
+            return None
+
+    async def get_session_by_user_name(self, user_name: str) -> Optional[OnboardingSession]:
+        """사용자 이름으로 최신 세션 조회 (가장 최근 생성된 세션)."""
+        try:
+            response = (
+                self.client.table(TABLE_SESSIONS)
+                .select("*")
+                .eq("user_name", user_name)
+                .order("created_at", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if response.data:
+                row = response.data[0]
+                return OnboardingSession(
+                    id=row.get("id"),
+                    sessionId=row["session_id"],
+                    userName=row["user_name"],
+                    createdAt=row.get("created_at"),
+                    updatedAt=row.get("updated_at"),
+                )
+            return None
+        except Exception as e:
+            LOGGER.error(f"Failed to get session by user_name: {e}")
             return None
 
     async def get_or_create_session(self, session_id: str, user_name: str) -> OnboardingSession:

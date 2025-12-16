@@ -1,6 +1,7 @@
 """Google File Search API 서비스."""
 
 import httpx
+import time
 from typing import List, Optional, Dict, Any
 
 from app.core.config import get_settings
@@ -10,27 +11,40 @@ settings = get_settings()
 GEMINI_API_KEY = settings.gemini_api_key
 BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
+# 캐싱 (메모리)
+_stores_cache: Optional[List[Dict[str, Any]]] = None
+_stores_cache_time: float = 0
+CACHE_TTL_SECONDS = 300  # 5분
+
 
 async def get_file_search_stores() -> List[Dict[str, Any]]:
-    """모든 File Search 스토어 목록 조회 (페이지네이션 처리)."""
+    """모든 File Search 스토어 목록 조회 (페이지네이션 처리 + 캐싱)."""
+    global _stores_cache, _stores_cache_time
+
+    # 캐시 유효성 확인
+    now = time.time()
+    if _stores_cache is not None and (now - _stores_cache_time) < CACHE_TTL_SECONDS:
+        return _stores_cache
+
     url = f"{BASE_URL}/fileSearchStores"
     headers = {"x-goog-api-key": GEMINI_API_KEY}
-    
+
     all_stores = []
     next_page_token = None
-    
-    async with httpx.AsyncClient(timeout=60) as client:
+
+    # 타임아웃을 10초로 줄여서 빠르게 실패
+    async with httpx.AsyncClient(timeout=10) as client:
         while True:
             params = {}
             if next_page_token:
                 params["pageToken"] = next_page_token
-            
+
             response = await client.get(url, headers=headers, params=params)
             response.raise_for_status()
             data = response.json()
-            
+
             stores = data.get("fileSearchStores", [])
-            
+
             # 스토어 정보만 추가 (문서 수는 필요시에만 조회)
             for store in stores:
                 all_stores.append({
@@ -38,13 +52,24 @@ async def get_file_search_stores() -> List[Dict[str, Any]]:
                     "displayName": store.get("displayName", store["name"]),
                     "documentCount": 0,  # 나중에 필요시 조회
                 })
-            
+
             # 다음 페이지가 있는지 확인
             next_page_token = data.get("nextPageToken")
             if not next_page_token:
                 break
-        
+
+        # 캐시 저장
+        _stores_cache = all_stores
+        _stores_cache_time = now
+
         return all_stores
+
+
+def invalidate_stores_cache():
+    """스토어 캐시 무효화."""
+    global _stores_cache, _stores_cache_time
+    _stores_cache = None
+    _stores_cache_time = 0
 
 
 async def create_file_search_store(display_name: str) -> Dict[str, Any]:
@@ -55,12 +80,15 @@ async def create_file_search_store(display_name: str) -> Dict[str, Any]:
         "Content-Type": "application/json",
     }
     body = {"displayName": display_name}
-    
+
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(url, headers=headers, json=body)
         response.raise_for_status()
         store = response.json()
-        
+
+        # 캐시 무효화 (새 스토어 생성됨)
+        invalidate_stores_cache()
+
         return {
             "name": store["name"],
             "displayName": store.get("displayName", display_name),
@@ -74,13 +102,16 @@ async def delete_file_search_store(store_name: str) -> None:
     docs = await get_store_documents(store_name)
     if docs.get("documents") and len(docs["documents"]) > 0:
         raise ValueError("스토어에 문서가 있습니다. 먼저 모든 문서를 삭제하세요.")
-    
+
     url = f"{BASE_URL}/{store_name}"
     headers = {"x-goog-api-key": GEMINI_API_KEY}
-    
+
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.delete(url, headers=headers)
         response.raise_for_status()
+
+    # 캐시 무효화 (스토어 삭제됨)
+    invalidate_stores_cache()
 
 
 async def get_store_documents(

@@ -362,14 +362,12 @@ class CurriculumRepository:
             
             if progress:
                 # 업데이트 (점수 기록, 시도 횟수 증가, 완료 상태로 변경)
-                # DB 컬럼: basic_quiz_score, basic_quiz_attempts
+                # DB 컬럼: quiz_score, quiz_attempts
                 update_data = {
                     "updated_at": now,
                     "status": "completed",  # 자가 점검 완료 시 completed
-                    "completed_at": now,
-                    "basic_quiz_score": score,
-                    "basic_quiz_attempts": (progress.quiz_attempts or 0) + 1,
-                    "basic_quiz_attempted": True,
+                    "quiz_score": score,
+                    "quiz_attempts": (progress.quiz_attempts or 0) + 1,
                 }
                 
                 result = self.client.table(TABLE_PROGRESS).update(update_data).eq(
@@ -385,10 +383,8 @@ class CurriculumRepository:
                     "session_id": session_id,
                     "module_id": str(module_id),
                     "status": "completed",  # 자가 점검 완료 시 completed
-                    "completed_at": now,
-                    "basic_quiz_score": score,
-                    "basic_quiz_attempts": 1,
-                    "basic_quiz_attempted": True,
+                    "quiz_score": score,
+                    "quiz_attempts": 1,
                     "created_at": now,
                     "updated_at": now,
                 }
@@ -432,8 +428,8 @@ class CurriculumRepository:
                     status=row.get("status", "not_started"),
                     learningStartedAt=row.get("learning_started_at"),
                     learningCompletedAt=row.get("learning_completed_at"),
-                    quizScore=row.get("basic_quiz_score"),  # DB: basic_quiz_score
-                    quizAttempts=row.get("basic_quiz_attempts", 0),  # DB: basic_quiz_attempts
+                    quizScore=row.get("quiz_score"),
+                    quizAttempts=row.get("quiz_attempts", 0),
                     totalTimeSeconds=row.get("total_time_seconds", 0),  # DB: total_time_seconds
                     completedAt=row.get("completed_at"),
                 )
@@ -465,8 +461,8 @@ class CurriculumRepository:
                     status=row.get("status", "not_started"),
                     learningStartedAt=row.get("learning_started_at"),
                     learningCompletedAt=row.get("learning_completed_at"),
-                    quizScore=row.get("basic_quiz_score"),  # DB: basic_quiz_score
-                    quizAttempts=row.get("basic_quiz_attempts", 0),  # DB: basic_quiz_attempts
+                    quizScore=row.get("quiz_score"),
+                    quizAttempts=row.get("quiz_attempts", 0),
                     totalTimeSeconds=row.get("total_time_seconds", 0),  # DB: total_time_seconds
                     completedAt=row.get("completed_at"),
                 )

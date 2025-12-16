@@ -149,12 +149,33 @@ _conversation_cache: dict = {}
 
 @router.post("/session", response_model=CreateSessionResponse)
 async def create_session(request: CreateSessionRequest):
-    """온보딩 세션 생성."""
+    """온보딩 세션 조회 또는 생성 (사용자명 기반)."""
     import uuid
-    session_id = f"onboarding-{uuid.uuid4().hex[:8]}"
 
-    # Supabase에 세션 저장 (또는 인메모리 폴백)
     repo = get_onboarding_repository()
+
+    # 1. 사용자 이름으로 기존 세션 찾기
+    existing_session = await repo.get_session_by_user_name(request.userName)
+
+    if existing_session:
+        # 기존 세션 재사용
+        session_id = existing_session.session_id
+        logger.info(f"Reusing existing session: {session_id} for user: {request.userName}")
+
+        # 대화 히스토리 캐시 확인 (없으면 초기화)
+        if session_id not in _conversation_cache:
+            _conversation_cache[session_id] = {
+                "userName": request.userName,
+                "conversationHistory": [],
+            }
+
+        return CreateSessionResponse(
+            sessionId=session_id,
+            message="기존 세션을 불러왔습니다."
+        )
+
+    # 2. 새 세션 생성
+    session_id = f"onboarding-{uuid.uuid4().hex[:8]}"
     await repo.create_session(session_id, request.userName)
 
     # 대화 히스토리 캐시 초기화
@@ -163,11 +184,11 @@ async def create_session(request: CreateSessionRequest):
         "conversationHistory": [],
     }
 
-    logger.info(f"Created onboarding session: {session_id} for user: {request.userName}")
+    logger.info(f"Created new onboarding session: {session_id} for user: {request.userName}")
 
     return CreateSessionResponse(
         sessionId=session_id,
-        message="온보딩 세션이 시작되었습니다."
+        message="새 온보딩 세션이 시작되었습니다."
     )
 
 

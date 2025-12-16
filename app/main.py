@@ -51,6 +51,7 @@ app.add_middleware(
         "http://localhost:8000",   # Backend Local
         "http://localhost:3000",
         "http://localhost:3001",
+        "http://localhost:5173",   # Vite 프론트엔드(온보딩)
     ],
     allow_origin_regex="https?://.*",  # 모든 Origin 허용 (개발 편의성)
     allow_credentials=True,
