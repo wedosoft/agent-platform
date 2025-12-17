@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.router import get_api_router
 from app.core.config import get_settings
+from app.middleware.request_id import RequestIdLogFilter, RequestIdMiddleware
 from app.services.scheduler_service import get_scheduler_service
 
 
@@ -17,9 +18,11 @@ settings = get_settings()
 # Configure logging
 logging.basicConfig(
     level=settings.log_level,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(name)s - %(levelname)s - %(request_id)s - %(message)s",
 )
 logging.getLogger("app").setLevel(settings.log_level)
+for handler in logging.getLogger().handlers:
+    handler.addFilter(RequestIdLogFilter())
 
 # Silence noisy libraries
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -77,6 +80,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(RequestIdMiddleware)
 app.include_router(get_api_router())
 
 # Mount static files for the frontend
