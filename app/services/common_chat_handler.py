@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import threading
+import time
 from typing import Dict, List, Optional
 
 from fastapi import HTTPException, status
@@ -249,12 +250,19 @@ class CommonChatHandler:
         LOGGER.info("🔍 Searching stores: %s for sources: %s", store_names_to_search, sources_used)
 
         try:
+            t0 = time.perf_counter()
             result = await self.gemini_client.search(
                 query=enhanced_query,
                 store_names=store_names_to_search,
                 metadata_filters=metadata_filters,
                 conversation_history=history,
                 system_instruction=system_instruction,
+            )
+            LOGGER.info(
+                "Gemini search done stores=%s sources=%s ms=%s",
+                len(store_names_to_search),
+                sources_used,
+                int((time.perf_counter() - t0) * 1000),
             )
         except GeminiClientError as exc:
             LOGGER.exception("Gemini 검색 실패")
@@ -359,6 +367,8 @@ class CommonChatHandler:
         sources_used = [s for s in (request.sources or []) if s in self.store_names] or list(self.store_names.keys())
 
         try:
+            stream_t0 = time.perf_counter()
+            first_result_logged = False
             async for event in self.gemini_client.stream_search(
                 query=enhanced_query,
                 store_names=store_names_to_search,
@@ -366,6 +376,14 @@ class CommonChatHandler:
                 conversation_history=history,
                 system_instruction=system_instruction,
             ):
+                if not first_result_logged and event.get("event") == "result":
+                    first_result_logged = True
+                    LOGGER.info(
+                        "Gemini stream first_result stores=%s sources=%s ms=%s",
+                        len(store_names_to_search),
+                        sources_used,
+                        int((time.perf_counter() - stream_t0) * 1000),
+                    )
                 if event["event"] == "result":
                     payload = event["data"]
                     
