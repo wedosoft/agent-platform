@@ -30,16 +30,18 @@ async def analyze_ticket(state: AgentState) -> AgentState:
             analysis_result = await llm_adapter.propose_fields_only(ticket_context, response_tone=response_tone)
         else:
             analysis_result = await llm_adapter.analyze_ticket(ticket_context, response_tone=response_tone)
-        
-        # Filter field proposals based on selected_fields
-        selected_fields = state.get("selected_fields", [])
-        if selected_fields and "field_proposals" in analysis_result:
-            proposals = analysis_result["field_proposals"]
-            filtered_proposals = [
-                p for p in proposals 
-                if p.get("field_name") in selected_fields
-            ]
-            analysis_result["field_proposals"] = filtered_proposals
+
+        proposals = analysis_result.get("field_proposals")
+        if isinstance(proposals, list):
+            # Always drop "source" proposals (tests/UX contract)
+            proposals = [p for p in proposals if p.get("field_name") != "source"]
+
+            # Filter field proposals based on selected_fields
+            selected_fields = state.get("selected_fields", [])
+            if selected_fields:
+                proposals = [p for p in proposals if p.get("field_name") in selected_fields]
+
+            analysis_result["field_proposals"] = proposals
         
         state["analysis_result"] = analysis_result
         logger.info(f"Analysis complete: {analysis_result.get('intent')}")
