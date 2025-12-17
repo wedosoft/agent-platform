@@ -2,11 +2,13 @@
 
 import json
 import logging
-from typing import List, Optional
+from functools import lru_cache
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from supabase import Client, ClientOptions, create_client
 
 from app.services.gemini_client import get_gemini_client
 from app.services.onboarding_repository import get_onboarding_repository
@@ -813,63 +815,179 @@ PRODUCTS_FALLBACK = [
 ]
 
 
+def _fallback_products_by_id() -> Dict[str, Dict[str, Any]]:
+    return {p["id"]: p for p in PRODUCTS_FALLBACK}
+
+
+def _is_postgrest_table_missing_error(exc: Exception) -> bool:
+    # Supabase/PostgREST error code: PGRST205 = "Could not find the table ... in the schema cache"
+    text = str(exc)
+    return "PGRST205" in text or ("schema cache" in text and "Could not find the table" in text)
+
+
+@lru_cache
+def _get_supabase_client(schema: str) -> Client:
+    settings_local = get_settings()
+    if not settings_local.supabase_common_url or not settings_local.supabase_common_service_role_key:
+        raise RuntimeError("Supabase 설정이 없습니다. SUPABASE_COMMON_* 환경변수를 확인하세요.")
+
+    return create_client(
+        settings_local.supabase_common_url,
+        settings_local.supabase_common_service_role_key,
+        options=ClientOptions(schema=schema),
+    )
+
+
+def _normalize_product_row(
+    row: Dict[str, Any],
+    *,
+    product_type: str,
+) -> Optional[Dict[str, Any]]:
+    product_id = row.get("id")
+    if not product_id:
+        return None
+
+    # NOTE: DB 스키마/마이그레이션에 따라 컬럼명이 달라질 수 있어 최대한 유연하게 매핑한다.
+    name = row.get("name_en") or row.get("name") or row.get("nameEn") or product_id
+    name_ko = row.get("name_ko") or row.get("nameKo") or name
+    description = row.get("description_en") or row.get("description") or ""
+    description_ko = row.get("description_ko") or ""
+    icon = row.get("icon") or ("layer-group" if product_type == "bundle" else "cube")
+    color = row.get("color") or row.get("color_primary") or ("teal" if product_type == "bundle" else "blue")
+    display_order = row.get("display_order", 99)
+
+    return {
+        "id": product_id,
+        "name": name,
+        "name_ko": name_ko,
+        "description": description,
+        "description_ko": description_ko,
+        "icon": icon,
+        "color": color,
+        "product_type": product_type,
+        "display_order": display_order,
+    }
+
+
+def _sort_products(products: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return sorted(products, key=lambda x: (x.get("display_order", 99), x.get("id", "")))
+
+
+def _fetch_products_from_tables(client: Client) -> List[Dict[str, Any]]:
+    products: List[Dict[str, Any]] = []
+
+    modules_resp = (
+        client.table("product_modules")
+        .select("*")
+        .eq("is_active", True)
+        .order("display_order")
+        .execute()
+    )
+    for row in modules_resp.data or []:
+        normalized = _normalize_product_row(row, product_type="standalone")
+        if normalized:
+            products.append(normalized)
+
+    bundles_resp = (
+        client.table("product_bundles")
+        .select("*")
+        .eq("is_active", True)
+        .order("display_order")
+        .execute()
+    )
+    for row in bundles_resp.data or []:
+        normalized = _normalize_product_row(row, product_type="bundle")
+        if normalized:
+            products.append(normalized)
+
+    return _sort_products(products)
+
+
+def _fetch_products_from_curriculum_modules(client: Client) -> List[Dict[str, Any]]:
+    """product_modules/product_bundles가 없을 때 curriculum_modules에서 제품 목록을 유도한다."""
+    resp = (
+        client.table("curriculum_modules")
+        .select("target_product_id, target_product_type")
+        .eq("is_active", True)
+        .execute()
+    )
+
+    fallback_by_id = _fallback_products_by_id()
+    seen: Dict[str, str] = {}
+    for row in resp.data or []:
+        product_id = row.get("target_product_id")
+        product_type_raw = row.get("target_product_type") or "module"
+        if not product_id:
+            continue
+        seen[product_id] = "bundle" if product_type_raw == "bundle" else "standalone"
+
+    if not seen:
+        return []
+
+    products: List[Dict[str, Any]] = []
+    for product_id, product_type in seen.items():
+        base = fallback_by_id.get(product_id, {})
+        products.append({
+            "id": product_id,
+            "name": base.get("name") or product_id,
+            "name_ko": base.get("name_ko") or base.get("name") or product_id,
+            "description": base.get("description") or "",
+            "description_ko": base.get("description_ko") or "",
+            "icon": base.get("icon") or ("layer-group" if product_type == "bundle" else "cube"),
+            "color": base.get("color") or ("teal" if product_type == "bundle" else "blue"),
+            "product_type": product_type,
+            "display_order": base.get("display_order", 99),
+        })
+
+    return _sort_products(products)
+
+
+def _load_products_best_effort() -> List[Dict[str, Any]]:
+    """가능한 한 DB 기반 제품 목록을 반환하고, 불가하면 안전한 폴백을 사용한다."""
+    repo = get_onboarding_repository()
+    onboarding_client = repo.supabase
+
+    # 1) onboarding 스키마에서 product_* 테이블 조회
+    try:
+        products = _fetch_products_from_tables(onboarding_client)
+        if products:
+            return products
+    except Exception as exc:
+        if not _is_postgrest_table_missing_error(exc):
+            logger.warning(f"Failed to load products from onboarding schema tables: {exc}")
+
+    # 2) public 스키마에서 product_* 테이블 조회 (마이그레이션이 public에 적용된 경우 대비)
+    try:
+        public_client = _get_supabase_client("public")
+        products = _fetch_products_from_tables(public_client)
+        if products:
+            return products
+    except Exception as exc:
+        if not _is_postgrest_table_missing_error(exc):
+            logger.warning(f"Failed to load products from public schema tables: {exc}")
+
+    # 3) 커리큘럼 모듈에서 제품 목록 유도
+    try:
+        products = _fetch_products_from_curriculum_modules(onboarding_client)
+        if products:
+            return products
+    except Exception as exc:
+        logger.warning(f"Failed to derive products from curriculum_modules: {exc}")
+
+    return PRODUCTS_FALLBACK
+
+
 @router.get("/products")
 async def get_products():
     """지원 제품 목록 조회 (product_modules + product_bundles 통합)."""
-    try:
-        repo = get_onboarding_repository()
-        supabase = repo.supabase
-        
-        products = []
-        
-        # 1. product_modules (standalone 제품)
-        modules_resp = supabase.table("product_modules").select("*").eq("is_active", True).order("display_order").execute()
-        for mod in modules_resp.data or []:
-            products.append({
-                "id": mod["id"],
-                "name": mod["name_en"],
-                "name_ko": mod["name_ko"],
-                "description": mod.get("description_en") or "",
-                "description_ko": mod.get("description_ko") or "",
-                "icon": mod.get("icon") or "cube",
-                "color": mod.get("color") or "blue",
-                "product_type": "standalone",
-                "display_order": mod.get("display_order", 99),
-            })
-        
-        # 2. product_bundles (번들 제품)
-        bundles_resp = supabase.table("product_bundles").select("*").eq("is_active", True).order("display_order").execute()
-        for bundle in bundles_resp.data or []:
-            products.append({
-                "id": bundle["id"],
-                "name": bundle["name_en"],
-                "name_ko": bundle["name_ko"],
-                "description": bundle.get("description_en") or "",
-                "description_ko": bundle.get("description_ko") or "",
-                "icon": bundle.get("icon") or "layer-group",
-                "color": bundle.get("color") or "teal",
-                "product_type": "bundle",
-                "display_order": bundle.get("display_order", 99),
-            })
-        
-        # display_order로 정렬
-        products.sort(key=lambda x: x.get("display_order", 99))
-        
-        if not products:
-            # DB에 데이터 없으면 폴백
-            return PRODUCTS_FALLBACK
-            
-        return products
-        
-    except Exception as e:
-        logger.warning(f"Failed to load products from DB, using fallback: {e}")
-        return PRODUCTS_FALLBACK
+    return _load_products_best_effort()
 
 
 @router.get("/products/{product_id}")
 async def get_product(product_id: str):
     """단일 제품 정보 조회."""
-    product = next((p for p in PRODUCTS if p["id"] == product_id), None)
+    products = _load_products_best_effort()
+    product = next((p for p in products if p.get("id") == product_id), None)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return product
@@ -1133,7 +1251,7 @@ async def stream_product_chat(
     """
     try:
         kb_client = get_kb_client()
-        product = next((p for p in PRODUCTS if p["id"] == product_id), None)
+        product = next((p for p in _load_products_best_effort() if p.get("id") == product_id), None)
 
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
