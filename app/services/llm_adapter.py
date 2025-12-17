@@ -8,10 +8,9 @@ import logging
 from typing import Optional, Dict, Any, List
 import json
 import httpx
-import time
-from openai import AsyncOpenAI
 
 from app.core.config import get_settings
+from app.services.llm_gateway import LLMRequest, get_llm_gateway
 
 logger = logging.getLogger(__name__)
 
@@ -290,48 +289,29 @@ def _postprocess_nested_field_proposals(
 class LLMAdapter:
     def __init__(self):
         self.settings = get_settings()
-        self.provider = self.settings.llm_provider.lower()
-        self.api_key = (
-            self.settings.deepseek_api_key 
-            if self.provider == "deepseek" 
-            else self.settings.openai_api_key
-        )
-        
-        if not self.api_key:
-            logger.warning(f"API Key for {self.provider} is missing!")
-
-        # Initialize OpenAI client (DeepSeek is OpenAI-compatible)
-        base_url = "https://api.deepseek.com" if self.provider == "deepseek" else None
-        self.client = AsyncOpenAI(api_key=self.api_key, base_url=base_url)
-        
-        # Model selection
-        if self.provider == "deepseek":
-            self.model = "deepseek-chat"  # DeepSeek V3
-        else:
-            self.model = "gpt-4o-mini"  # Default OpenAI model
+        self.gateway = get_llm_gateway()
 
     async def generate(
         self, 
         system_prompt: str, 
         user_prompt: str, 
         temperature: float = 0.7,
-        json_mode: bool = False
+        json_mode: bool = False,
+        *,
+        purpose: str = "generate",
+        timeout_ms: Optional[int] = None,
     ) -> str:
         """Generate text response from LLM"""
-        try:
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=temperature,
-                response_format={"type": "json_object"} if json_mode else None
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            logger.error(f"LLM Generation Error ({self.provider}): {e}")
-            raise
+        req = LLMRequest(
+            purpose=purpose,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=temperature,
+            json_mode=json_mode,
+            timeout_ms=timeout_ms,
+        )
+        res = await self.gateway.generate(req)
+        return res.content
 
     async def analyze_ticket(self, ticket_context: Dict[str, Any], response_tone: str = "formal") -> Dict[str, Any]:
         """Analyze ticket for intent, sentiment, summary, and field proposals"""
@@ -374,22 +354,12 @@ class LLMAdapter:
         
         user_prompt = json.dumps(context_copy, ensure_ascii=False)
 
-        t0 = time.perf_counter()
         response = await self.generate(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.3,
-            json_mode=True
-        )
-
-        logger.info(
-            "LLM done purpose=analyze_ticket provider=%s model=%s json_mode=%s sys_chars=%s user_chars=%s ms=%s",
-            self.provider,
-            self.model,
-            True,
-            len(system_prompt),
-            len(user_prompt),
-            int((time.perf_counter() - t0) * 1000),
+            json_mode=True,
+            purpose="analyze_ticket",
         )
 
         result = json.loads(response)
@@ -489,22 +459,12 @@ class LLMAdapter:
 
         user_prompt = json.dumps(context_copy, ensure_ascii=False)
 
-        t0 = time.perf_counter()
         response = await self.generate(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.2,
             json_mode=True,
-        )
-
-        logger.info(
-            "LLM done purpose=propose_fields_only provider=%s model=%s json_mode=%s sys_chars=%s user_chars=%s ms=%s",
-            self.provider,
-            self.model,
-            True,
-            len(system_prompt),
-            len(user_prompt),
-            int((time.perf_counter() - t0) * 1000),
+            purpose="propose_fields_only",
         )
 
         result = json.loads(response)
@@ -554,21 +514,11 @@ class LLMAdapter:
         }
         
         user_prompt = json.dumps(context, ensure_ascii=False)
-        t0 = time.perf_counter()
         response = await self.generate(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.7,
-            json_mode=True
-        )
-
-        logger.info(
-            "LLM done purpose=propose_solution provider=%s model=%s json_mode=%s sys_chars=%s user_chars=%s ms=%s",
-            self.provider,
-            self.model,
-            True,
-            len(system_prompt),
-            len(user_prompt),
-            int((time.perf_counter() - t0) * 1000),
+            json_mode=True,
+            purpose="propose_solution",
         )
         return json.loads(response)
