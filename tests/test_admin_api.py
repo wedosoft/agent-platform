@@ -133,7 +133,8 @@ def mock_admin_service():
 @pytest.fixture
 def admin_client(mock_admin_service) -> TestClient:
     """테스트 클라이언트"""
-    return TestClient(app)
+    with TestClient(app) as client:
+        yield client
 
 
 def admin_headers():
