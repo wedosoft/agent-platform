@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Optional
 import inspect
 import logging
 
@@ -151,6 +151,88 @@ class ChatUsecase:
             ensure_session_exists=False,
         )
 
+    async def stream_legacy_chat(self, request: ChatRequest, *, tenant: Optional[TenantContext]) -> AsyncIterator[dict]:
+        """
+        레거시 streaming 처리:
+        - session이 없으면 생성(기존 동작 유지)
+        - tenant 헤더가 있으면 multitenant stream 경로로 디스패치(하위호환)
+        - 그 외에는 common handler stream 유지
+        - SSE 포맷 자체는 라우트에서 유지(여기서는 event/data dict만 yield)
+        """
+        session = await self._repository.get(request.session_id)
+        if not session:
+            session = {"sessionId": request.session_id, "conversationHistory": [], "questionHistory": []}
+            await self._repository.save(session)
+
+        if tenant is not None:
+            if not self._multitenant_handler:
+                yield {"event": "error", "data": {"message": "Chat service not available"}}
+                return
+
+            raw_history = session.get("questionHistory", []) if isinstance(session, dict) else []
+            history_texts = [str(entry) for entry in raw_history if isinstance(entry, str)][-4:]
+
+            response_text = ""
+            async for event in self._multitenant_handler.stream_handle(
+                request,
+                tenant,
+                history=history_texts,
+            ):
+                yield event
+                if event.get("event") == "result":
+                    response_text = (event.get("data") or {}).get("text", "") or ""
+                    await self._repository.append_turn(request.session_id, request.query, response_text)
+            return
+
+        if not self._common_handler or not self._common_handler.can_handle(request):
+            yield {"event": "error", "data": {"message": f"지원하지 않는 검색 소스입니다: {request.sources}"}}
+            return
+
+        conversation_history = session.get("conversationHistory", []) if isinstance(session, dict) else []
+        if len(conversation_history) > 4:
+            conversation_history = conversation_history[-4:]
+
+        terminal_event_sent = False
+        response_text = ""
+        async for event in self._common_handler.stream_handle(request, history=conversation_history):
+            yield event
+            if event.get("event") == "result":
+                terminal_event_sent = True
+                response_text = (event.get("data") or {}).get("text", "") or ""
+                await self._repository.append_turn(request.session_id, request.query, response_text)
+            if event.get("event") == "error":
+                terminal_event_sent = True
+                break
+        if not terminal_event_sent:
+            yield {"event": "error", "data": {"message": "잠시 후 다시 시도해 주세요."}}
+
+    async def stream_multitenant_chat(self, request: ChatRequest, *, tenant: TenantContext) -> AsyncIterator[dict]:
+        """
+        멀티테넌트 streaming 처리:
+        - session이 없어도 생성하지 않음(기존 동작 유지)
+        - SSE 포맷 자체는 라우트에서 유지(event/data dict만 yield)
+        """
+        if not self._multitenant_handler:
+            yield {"event": "error", "data": {"message": "Chat service not available"}}
+            return
+
+        session = await self._repository.get(request.session_id)
+        history: list[str] = []
+        if session and isinstance(session, dict):
+            raw_history = session.get("questionHistory", [])
+            history = [str(entry) for entry in raw_history if isinstance(entry, str)][-4:]
+
+        response_text = ""
+        async for event in self._multitenant_handler.stream_handle(
+            request,
+            tenant,
+            history=history,
+        ):
+            yield event
+            if event.get("event") == "result":
+                response_text = (event.get("data") or {}).get("text", "") or ""
+                await self._repository.append_turn(request.session_id, request.query, response_text)
+
     async def _handle_multitenant_chat(
         self,
         request: ChatRequest,
@@ -213,4 +295,3 @@ async def get_chat_usecase(
         pipeline=pipeline,
         multitenant_handler=multitenant_handler,
     )
-

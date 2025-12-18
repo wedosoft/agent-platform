@@ -35,6 +35,7 @@
 | PR4 | Assist/fieldsOnly에 적용 + 검증 | 머지 |  | `feat/pr4-assist-fields-only-verify` | https://github.com/wedosoft/agent-platform/pull/7 | SSE 포맷 유지 |
 | PR5 | 채널 BFF 정돈(`/api/{channel}/v1`) | 머지 |  | `feat/pr5-channel-bff-chat` | https://github.com/wedosoft/agent-platform/pull/8 | 점진적 전환 |
 | PR6 | Chat Core 유스케이스 분리(`app/services`) | 머지 |  | `feat/pr6-chat-usecase` | https://github.com/wedosoft/agent-platform/pull/11 | 채널/레거시/멀티테넌트 로직 단일화 |
+| PR7 | Chat 스트리밍 유스케이스 통일 | 진행 |  | `feat/pr7-chat-stream-usecase` |  | SSE 포맷 유지, stream 로직 단일화 |
 
 ## 인수인계/상태 공유
 
