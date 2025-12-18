@@ -25,14 +25,15 @@
 
 | PR | 제목 | 상태 | 담당 | 브랜치 | PR 링크 | 비고/의존성 |
 |---:|---|---|---|---|---|---|
-| PR0-B | 가드레일(문서+PR 템플릿) | 진행 |  | `chore/pr0-renewal-guardrails` |  | `docs/renewal/*`, `.github/pull_request_template.md` |
-| PR0-A | Analyzer `source` 제안 제거 | 진행 |  | `fix/pr0-filter-source-proposals` |  | 핵심: `app/agents/analyzer.py` |
-| PR0-C | pytest 안정화(외부 LLM 호출 차단) | 진행 |  | `chore/pr0c-stabilize-pytest` |  | 핵심: `tests/conftest.py` |
-| PR1 | 관측성(request_id + 단계별 timing 로그) | 대기 |  |  |  | 기능 변화 없이 계측만 |
-| PR2 | LLM Gateway 뼈대(동작 동일) | 대기 |  |  |  | LLM 호출 단일 진입점 |
-| PR3 | Local-first + Cloud fallback(Feature flag) | 대기 |  |  |  | 목적별 라우팅/timeout |
-| PR4 | Assist/fieldsOnly에 적용 + 검증 | 대기 |  |  |  | SSE 포맷 유지 |
-| PR5 | 채널 BFF 정돈(`/api/{channel}/v1`) | 대기 |  |  |  | 점진적 전환 |
+| PR0-A | Analyzer `source` 제안 제거 | 머지 |  | `fix/pr0-tests-green` | https://github.com/wedosoft/agent-platform/pull/1 | 핵심: `app/agents/analyzer.py` |
+| PR0-C | pytest 안정화(외부 LLM 호출 차단) | 머지 |  | `fix/pr0-tests-green` | https://github.com/wedosoft/agent-platform/pull/1 | 핵심: `tests/conftest.py` |
+| PR0-B | 가드레일(문서+PR 템플릿) | 머지 |  | `chore/pr0-renewal-guardrails-main` | https://github.com/wedosoft/agent-platform/pull/2 | `docs/renewal/*`, `.github/pull_request_template.md` |
+| PR0-D | 인수인계 문서(HANDOFF) | 머지 |  | `chore/pr0-handoff-doc-main` | https://github.com/wedosoft/agent-platform/pull/3 | `docs/renewal/HANDOFF.md` |
+| PR1 | 관측성(request_id + 단계별 timing 로그) | 머지 |  | `chore/pr1-observability-main` | https://github.com/wedosoft/agent-platform/pull/4 | 기능 변화 없이 계측만 |
+| PR2 | LLM Gateway 뼈대(동작 동일) | 머지 |  | `feat/pr2-llm-gateway-main` | https://github.com/wedosoft/agent-platform/pull/5 | LLM 호출 단일 진입점 |
+| PR3 | Local-first + Cloud fallback(Feature flag) | 머지 |  | `feat/pr3-local-first-fallback` | https://github.com/wedosoft/agent-platform/pull/6 | 목적별 라우팅/timeout |
+| PR4 | Assist/fieldsOnly에 적용 + 검증 | 머지 |  | `feat/pr4-assist-fields-only-verify` | https://github.com/wedosoft/agent-platform/pull/7 | SSE 포맷 유지 |
+| PR5 | 채널 BFF 정돈(`/api/{channel}/v1`) | 진행 |  | `feat/pr5-channel-bff-chat` |  | 점진적 전환 |
 
 ## 인수인계/상태 공유
 

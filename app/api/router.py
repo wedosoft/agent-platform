@@ -24,11 +24,17 @@ def get_api_router() -> APIRouter:
     router.include_router(health.router)
     router.include_router(sessions.router)
     router.include_router(agents.router)
+    # Legacy chat endpoints (keep)
     router.include_router(chat.router)
+    # Channel BFF (new, non-breaking)
+    router.include_router(chat.router, prefix="/fdk/v1")
     router.include_router(common_documents.router)
     router.include_router(pipeline.router)
     router.include_router(file_search.router)
-    router.include_router(multitenant.router)  # Multitenant routes at /api/*
+    # Multitenant chat endpoints (namespaced; fixes /api/chat route collision)
+    router.include_router(multitenant.router, prefix="/multitenant")
+    # Channel BFF (new, non-breaking)
+    router.include_router(multitenant.router, prefix="/web/v1")
     router.include_router(assist.router)  # FDK Custom App assist API
     router.include_router(admin.router)  # Admin API for tenant management
     router.include_router(sync.router, prefix="/sync")  # Sync API for data synchronization
