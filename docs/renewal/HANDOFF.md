@@ -107,3 +107,9 @@ git show 11e4cfb:tests/test_llm_gateway.py | nl -ba | sed -n '1,220p'
 - 단일 진실 소스: `docs/renewal/PR_ROADMAP.md`에 PR 링크/상태를 갱신
 - PR 본문에 “요구사항 체크리스트 + 근거(파일/라인) + pytest 증빙”을 남겨서, PR 자체가 인수인계 문서가 되게 유지
 
+## 6) API 경로 정돈(PR5) 메모
+
+- 기존 경로는 유지하면서, 신규 표준 경로를 병행 제공합니다.
+  - 예: `/api/fdk/v1/chat`, `/api/web/v1/chat`
+- 멀티테넌트 채팅은 `/api/multitenant/*`로 네임스페이스를 분리하고,
+  `/api/chat`은 “헤더가 있으면 멀티테넌트, 없으면 레거시” 방식으로 점진 전환할 수 있게 유지하는 방향이 안전합니다.

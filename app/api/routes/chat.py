@@ -8,7 +8,9 @@ from fastapi.responses import StreamingResponse
 import json
 
 from app.models.session import ChatRequest, ChatResponse
+from app.middleware.tenant_auth import TenantContext, get_optional_tenant_context
 from app.services.common_chat_handler import CommonChatHandler, get_common_chat_handler
+from app.services.multitenant_chat_handler import MultitenantChatHandler, get_multitenant_chat_handler
 from app.services.query_filter_analyzer import QueryFilterAnalyzer, get_query_filter_analyzer
 from app.services.pipeline_client import PipelineClient, PipelineClientError, get_pipeline_client
 from app.services.ticket_chat_handler import TicketChatHandler, get_ticket_chat_handler
@@ -38,6 +40,8 @@ async def chat(
     analyzer: Optional[QueryFilterAnalyzer] = Depends(get_query_filter_analyzer),
     ticket_handler: Optional[TicketChatHandler] = Depends(get_ticket_chat_handler),
     pipeline: PipelineClient = Depends(get_pipeline_client),
+    tenant: Optional[TenantContext] = Depends(get_optional_tenant_context),
+    multitenant_handler: Optional[MultitenantChatHandler] = Depends(get_multitenant_chat_handler),
 ) -> ChatResponse:
     """통합 채팅 엔드포인트 - 모든 sources (tickets, articles, common) 처리"""
     
@@ -58,6 +62,33 @@ async def chat(
         LOGGER.info("🎯 CommonChatHandler handling request for sources: %s", request.sources)
         response = await _maybe_await(common_handler.handle(request, history=conversation_history))
         # Save both question and answer as a turn
+        await repository.append_turn(request.session_id, request.query, response.text or "")
+        return response
+
+    # ---------------------------------------------------------------------
+    # Multitenant routing (when tenant auth headers are present)
+    # - Keep backward compatibility for clients that used /api/chat with tenant headers.
+    # - When tenant context is present, enforce tenant-isolated handler.
+    # ---------------------------------------------------------------------
+    if tenant is not None:
+        if not multitenant_handler:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Chat service not available. Check Gemini API configuration.",
+            )
+
+        additional_filters = []
+        if analyzer:
+            analyzer_result = await _maybe_await(analyzer.analyze(request.query))
+            if analyzer_result and getattr(analyzer_result, "filters", None):
+                additional_filters = analyzer_result.filters
+
+        response = await multitenant_handler.handle(
+            request,
+            tenant,
+            history=conversation_history,
+            additional_filters=additional_filters,
+        )
         await repository.append_turn(request.session_id, request.query, response.text or "")
         return response
     
@@ -150,6 +181,8 @@ async def chat_stream(
     clarification_option: Optional[str] = Query(None, alias="clarificationOption"),
     repository: SessionRepository = Depends(get_session_repository),
     common_handler: Optional[CommonChatHandler] = Depends(get_common_chat_handler),
+    tenant: Optional[TenantContext] = Depends(get_optional_tenant_context),
+    multitenant_handler: Optional[MultitenantChatHandler] = Depends(get_multitenant_chat_handler),
 ) -> StreamingResponse:
     effective_product = product or legacy_common_product
 
@@ -177,6 +210,26 @@ async def chat_stream(
             conversation_history = conversation_history[-4:]
 
     async def event_stream():
+        if tenant is not None:
+            if not multitenant_handler:
+                yield _format_sse("error", {"message": "Chat service not available"})
+                return
+
+            raw_history = session.get("questionHistory", []) if isinstance(session, dict) else []
+            history_texts = [str(entry) for entry in raw_history if isinstance(entry, str)][-4:]
+
+            response_text = ""
+            async for event in multitenant_handler.stream_handle(
+                request,
+                tenant,
+                history=history_texts,
+            ):
+                yield _format_sse(event["event"], event["data"])
+                if event["event"] == "result":
+                    response_text = event["data"].get("text", "")
+                    await repository.append_turn(request.session_id, request.query, response_text)
+            return
+
         if not common_handler or not common_handler.can_handle(request):
             yield _format_sse("error", {"message": f"지원하지 않는 검색 소스입니다: {request.sources}"})
             return

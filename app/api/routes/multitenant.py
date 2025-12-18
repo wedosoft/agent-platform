@@ -7,6 +7,7 @@ Used by platform-specific frontends (Freshdesk, Zendesk, etc.)
 
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional
+import inspect
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -23,6 +24,13 @@ router = APIRouter(tags=["multitenant"])
 
 def _format_sse(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _maybe_await(value):
+    """Await the value if needed to support sync/async hybrid analyzers."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -59,7 +67,7 @@ async def multitenant_chat(
     additional_filters = []
     analyzer_result = None
     if analyzer:
-        analyzer_result = analyzer.analyze(request.query)
+        analyzer_result = await _maybe_await(analyzer.analyze(request.query))
         if analyzer_result and analyzer_result.filters:
             additional_filters = analyzer_result.filters
     
