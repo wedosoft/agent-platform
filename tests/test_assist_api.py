@@ -123,7 +123,8 @@ def mock_assist_service():
 @pytest.fixture
 def assist_client(mock_assist_service) -> TestClient:
     """테스트 클라이언트"""
-    return TestClient(app)
+    with TestClient(app) as client:
+        yield client
 
 
 # =============================================================================

@@ -18,6 +18,41 @@ def anyio_backend():
     return "asyncio"
 
 
+@pytest.fixture(autouse=True)
+def stub_llm_calls(monkeypatch):
+    """테스트에서 외부 LLM 네트워크 호출이 발생하지 않도록 기본 stub 처리."""
+
+    from app.services.llm_adapter import LLMAdapter
+
+    async def fake_analyze_ticket(_self, _ticket_context, response_tone: str = "formal"):
+        return {
+            "intent": "inquiry",
+            "sentiment": "neutral",
+            "summary": "요약",
+            "summary_sections": [
+                {"title": "핵심 이슈", "content": "요약"},
+                {"title": "현재 상태", "content": "설명"},
+            ],
+            "key_entities": [],
+            "field_proposals": [],
+        }
+
+    async def fake_propose_fields_only(_self, _ticket_context, response_tone: str = "formal"):
+        return {"field_proposals": []}
+
+    async def fake_propose_solution(_self, _ticket_context, _search_results, _analysis_result):
+        return {
+            "cause": "원인",
+            "solution": "해결",
+            "field_updates": {},
+            "reasoning": "근거",
+        }
+
+    monkeypatch.setattr(LLMAdapter, "analyze_ticket", fake_analyze_ticket, raising=True)
+    monkeypatch.setattr(LLMAdapter, "propose_fields_only", fake_propose_fields_only, raising=True)
+    monkeypatch.setattr(LLMAdapter, "propose_solution", fake_propose_solution, raising=True)
+
+
 class DummyPipelineClient:
     def __init__(self) -> None:
         self.sessions = {}
@@ -105,7 +140,8 @@ def override_common_documents_service():
 
 @pytest.fixture()
 def test_client() -> TestClient:
-    return TestClient(app)
+    with TestClient(app) as client:
+        yield client
 
 
 @pytest.fixture(autouse=True)
