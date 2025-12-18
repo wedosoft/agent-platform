@@ -47,7 +47,7 @@ def test_fdk_v1_chat_works(test_client, override_pipeline_client):
         json={
             "sessionId": session_id,
             "query": "hello",
-            "sources": ["store-a"],
+            "sources": ["tickets"],
         },
     )
     assert res.status_code == 200
