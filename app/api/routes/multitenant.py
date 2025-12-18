@@ -7,7 +7,6 @@ Used by platform-specific frontends (Freshdesk, Zendesk, etc.)
 
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional
-import inspect
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -15,8 +14,8 @@ import json
 
 from app.middleware.tenant_auth import TenantContext, get_tenant_context, get_optional_tenant_context
 from app.models.session import ChatRequest, ChatResponse
+from app.services.chat_usecase import ChatUsecase, get_chat_usecase
 from app.services.multitenant_chat_handler import MultitenantChatHandler, get_multitenant_chat_handler
-from app.services.query_filter_analyzer import QueryFilterAnalyzer, get_query_filter_analyzer
 from app.services.session_repository import SessionRepository, get_session_repository
 
 router = APIRouter(tags=["multitenant"])
@@ -26,20 +25,12 @@ def _format_sse(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-async def _maybe_await(value):
-    """Await the value if needed to support sync/async hybrid analyzers."""
-    if inspect.isawaitable(value):
-        return await value
-    return value
-
-
 @router.post("/chat", response_model=ChatResponse)
 async def multitenant_chat(
     request: ChatRequest,
     tenant: TenantContext = Depends(get_tenant_context),
     handler: Optional[MultitenantChatHandler] = Depends(get_multitenant_chat_handler),
-    analyzer: Optional[QueryFilterAnalyzer] = Depends(get_query_filter_analyzer),
-    repository: SessionRepository = Depends(get_session_repository),
+    usecase: ChatUsecase = Depends(get_chat_usecase),
 ) -> ChatResponse:
     """
     Multitenant chat endpoint.
@@ -56,44 +47,8 @@ async def multitenant_chat(
             status_code=503,
             detail="Chat service not available. Check Gemini API configuration.",
         )
-    
-    # Get conversation history
-    session = await repository.get(request.session_id)
-    conversation_history = []
-    if session and isinstance(session, dict):
-        conversation_history = session.get("conversationHistory", [])
-    
-    # Analyze query for additional filters
-    additional_filters = []
-    analyzer_result = None
-    if analyzer:
-        analyzer_result = await _maybe_await(analyzer.analyze(request.query))
-        if analyzer_result and analyzer_result.filters:
-            additional_filters = analyzer_result.filters
-    
-    # Handle chat with tenant context
-    response = await handler.handle(
-        request,
-        tenant,
-        history=conversation_history,
-        additional_filters=additional_filters,
-    )
-    
-    # Save conversation turn
-    await repository.append_turn(
-        request.session_id,
-        request.query,
-        response.text or "",
-    )
-    
-    # Add analyzer result info to response if available
-    if analyzer_result:
-        if analyzer_result.summaries and not response.filters:
-            response.filters = analyzer_result.summaries
-        if analyzer_result.confidence:
-            response.filter_confidence = analyzer_result.confidence
-    
-    return response
+
+    return await usecase.handle_multitenant_chat(request, tenant=tenant)
 
 
 @router.get("/chat/stream")
