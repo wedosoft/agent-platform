@@ -2,7 +2,7 @@ from typing import Any, Dict, List, Optional
 
 import json
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from app.middleware.tenant_auth import TenantContext, get_optional_tenant_context
@@ -27,6 +27,11 @@ async def fdk_chat(
     - 현재는 레거시 chat 동작과 동일(하위호환/점진 전환 목적)
     - 향후 채널별 기본값/검증/권한을 이 레이어에서만 추가
     """
+    if not request.sources:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="FDK 채널에서는 sources가 필수입니다.",
+        )
     return await usecase.handle_legacy_chat(request, tenant=tenant)
 
 
@@ -42,6 +47,11 @@ async def fdk_chat_stream(
     tenant: Optional[TenantContext] = Depends(get_optional_tenant_context),
     usecase: ChatUsecase = Depends(get_chat_usecase),
 ) -> StreamingResponse:
+    if not sources:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="FDK 채널에서는 sources가 필수입니다.",
+        )
     request = ChatRequest(
         sessionId=session_id,
         query=query,
