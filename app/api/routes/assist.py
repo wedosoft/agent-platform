@@ -261,12 +261,15 @@ async def analyze_ticket(
 
     # Ticket context enrichment (include full conversations)
     ticket_context = request.model_dump(by_alias=True)
-    ticket_context = await _enrich_ticket_context_with_conversations(
-        ticket_context,
-        freshdesk_domain=x_freshdesk_domain,
-        freshdesk_api_key=x_freshdesk_api_key,
-        tenant_id=x_tenant_id,
-    )
+
+    # fieldsOnly 모드에서는 대화 전체 수집(페이지네이션)이 병목이 될 수 있어 기본적으로 생략한다.
+    if not bool(ticket_context.get("fieldsOnly")):
+        ticket_context = await _enrich_ticket_context_with_conversations(
+            ticket_context,
+            freshdesk_domain=x_freshdesk_domain,
+            freshdesk_api_key=x_freshdesk_api_key,
+            tenant_id=x_tenant_id,
+        )
 
     # Initial State
     initial_state = {
