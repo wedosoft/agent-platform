@@ -38,7 +38,7 @@
 | PR7 | Chat 스트리밍 유스케이스 통일 | 머지 |  | `feat/pr7-chat-stream-usecase` | https://github.com/wedosoft/agent-platform/pull/13 | SSE 포맷 유지, stream 로직 단일화 |
 | PR8 | 채널 BFF 어댑터 도입(`fdk/web v1`) | 머지 |  | `feat/pr8-channel-bff-adapters` | https://github.com/wedosoft/agent-platform/pull/15 | 채널별 변환/권한 레이어 분리 |
 | PR9 | FDK 채널 sources 필수 | 머지 |  | `feat/pr9-fdk-sources-required` | https://github.com/wedosoft/agent-platform/pull/16 | sources 누락 시 400 |
-| PR10 | FDK sources allowlist 검증 | 진행 |  | `feat/pr10-fdk-sources-allowlist` |  | `docs/renewal/PR10.md` |
+| PR10 | FDK sources allowlist 검증 | 머지 |  | `feat/pr10-fdk-sources-allowlist` | https://github.com/wedosoft/agent-platform/pull/18 | `docs/renewal/PR10.md` |
 
 ## 인수인계/상태 공유
 
