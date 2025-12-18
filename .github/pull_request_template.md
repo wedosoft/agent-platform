@@ -27,3 +27,7 @@
 
 - (예) 이 PR revert 1개로 롤백 가능
 
+## 인수인계/진행현황
+
+- 상태 공유: `docs/renewal/PR_ROADMAP.md`
+- 인수인계 노트(필요 시 갱신): `docs/renewal/HANDOFF.md`

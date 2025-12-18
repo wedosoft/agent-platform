@@ -25,11 +25,15 @@
 
 | PR | 제목 | 상태 | 담당 | 브랜치 | PR 링크 | 비고/의존성 |
 |---:|---|---|---|---|---|---|
-| PR0-A | 테스트 그린(Analyzer `source` 제안 제거) | 진행 |  |  |  | (예) `tests/test_ticket_analysis_speed.py` |
-| PR0-B | 가드레일(문서+PR 템플릿) | 진행 |  |  |  | 이 문서/템플릿 추가 |
+| PR0-B | 가드레일(문서+PR 템플릿) | 진행 |  | `chore/pr0-renewal-guardrails` |  | `docs/renewal/*`, `.github/pull_request_template.md` |
+| PR0-A | Analyzer `source` 제안 제거 | 진행 |  | `fix/pr0-filter-source-proposals` |  | 핵심: `app/agents/analyzer.py` |
+| PR0-C | pytest 안정화(외부 LLM 호출 차단) | 진행 |  | `chore/pr0c-stabilize-pytest` |  | 핵심: `tests/conftest.py` |
 | PR1 | 관측성(request_id + 단계별 timing 로그) | 대기 |  |  |  | 기능 변화 없이 계측만 |
 | PR2 | LLM Gateway 뼈대(동작 동일) | 대기 |  |  |  | LLM 호출 단일 진입점 |
 | PR3 | Local-first + Cloud fallback(Feature flag) | 대기 |  |  |  | 목적별 라우팅/timeout |
 | PR4 | Assist/fieldsOnly에 적용 + 검증 | 대기 |  |  |  | SSE 포맷 유지 |
 | PR5 | 채널 BFF 정돈(`/api/{channel}/v1`) | 대기 |  |  |  | 점진적 전환 |
 
+## 인수인계/상태 공유
+
+- 현재 상황/머지 순서/검증 방법: `docs/renewal/HANDOFF.md`
