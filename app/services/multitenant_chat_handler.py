@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import List, Optional
 
 from fastapi import HTTPException, status
@@ -151,12 +152,20 @@ class MultitenantChatHandler:
         )
         
         try:
+            t0 = time.perf_counter()
             result = await self.gemini_client.search(
                 query=request.query,
                 store_names=store_names,
                 metadata_filters=all_filters,
                 conversation_history=history,
                 system_instruction=SYSTEM_INSTRUCTION,
+            )
+            LOGGER.info(
+                "Multitenant search done tenant=%s platform=%s stores=%s ms=%s",
+                tenant.tenant_id,
+                tenant.platform,
+                len(store_names),
+                int((time.perf_counter() - t0) * 1000),
             )
         except GeminiClientError as exc:
             LOGGER.exception("Gemini search failed for tenant %s", tenant.tenant_id)
@@ -216,6 +225,8 @@ class MultitenantChatHandler:
         )
         
         try:
+            stream_t0 = time.perf_counter()
+            first_result_logged = False
             async for event in self.gemini_client.stream_search(
                 query=request.query,
                 store_names=store_names,
@@ -223,6 +234,15 @@ class MultitenantChatHandler:
                 conversation_history=history,
                 system_instruction=SYSTEM_INSTRUCTION,
             ):
+                if not first_result_logged and event.get("event") == "result":
+                    first_result_logged = True
+                    LOGGER.info(
+                        "Multitenant stream first_result tenant=%s platform=%s stores=%s ms=%s",
+                        tenant.tenant_id,
+                        tenant.platform,
+                        len(store_names),
+                        int((time.perf_counter() - stream_t0) * 1000),
+                    )
                 if event["event"] == "result":
                     payload = event["data"]
                     payload.update({
