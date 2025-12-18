@@ -33,7 +33,7 @@
 | PR2 | LLM Gateway 뼈대(동작 동일) | 머지 |  | `feat/pr2-llm-gateway-main` | https://github.com/wedosoft/agent-platform/pull/5 | LLM 호출 단일 진입점 |
 | PR3 | Local-first + Cloud fallback(Feature flag) | 머지 |  | `feat/pr3-local-first-fallback` | https://github.com/wedosoft/agent-platform/pull/6 | 목적별 라우팅/timeout |
 | PR4 | Assist/fieldsOnly에 적용 + 검증 | 머지 |  | `feat/pr4-assist-fields-only-verify` | https://github.com/wedosoft/agent-platform/pull/7 | SSE 포맷 유지 |
-| PR5 | 채널 BFF 정돈(`/api/{channel}/v1`) | 진행 |  | `feat/pr5-channel-bff-chat` |  | 점진적 전환 |
+| PR5 | 채널 BFF 정돈(`/api/{channel}/v1`) | 리뷰 |  | `feat/pr5-channel-bff-chat` | https://github.com/wedosoft/agent-platform/pull/8 | 점진적 전환 |
 
 ## 인수인계/상태 공유
 
