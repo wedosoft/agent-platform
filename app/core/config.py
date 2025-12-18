@@ -62,6 +62,15 @@ class Settings(BaseSettings):
     deepseek_api_key: Optional[str] = None
     openai_api_key: Optional[str] = Field(None, alias="OPEN_API_KEY")
 
+    # Local LLM (OpenAI-compatible) routing
+    llm_local_enabled: bool = False
+    llm_local_base_url: Optional[str] = None
+    llm_local_api_key: Optional[str] = None
+    llm_local_model: Optional[str] = None
+    llm_local_purposes: List[str] = Field(default_factory=lambda: ["propose_fields_only"])
+    llm_local_timeout_ms: int = 1200
+    llm_cloud_timeout_ms_fields_only: int = 8000
+
     # Multi-tenant config (JSON or file path)
     tenant_config: Optional[str] = None
     tenant_config_path: Optional[str] = None
@@ -81,6 +90,15 @@ class Settings(BaseSettings):
             return items or ["ko", "en"]
         if value is None:
             return ["ko", "en"]
+        return value
+
+    @field_validator("llm_local_purposes", mode="before")
+    @classmethod
+    def split_llm_local_purposes(cls, value):
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        if value is None:
+            return ["propose_fields_only"]
         return value
 
     @model_validator(mode='after')

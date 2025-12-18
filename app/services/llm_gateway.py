@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -81,12 +82,24 @@ class LLMTimeoutError(RuntimeError):
 
 
 class LLMGateway:
-    def __init__(self, *, providers: Dict[str, LLMProvider], default_route: List[str]) -> None:
+    def __init__(
+        self,
+        *,
+        providers: Dict[str, LLMProvider],
+        default_route: List[str],
+        purpose_routes: Optional[Dict[str, List[str]]] = None,
+        local_timeout_ms: Optional[int] = None,
+        cloud_timeout_ms_fields_only: Optional[int] = None,
+    ) -> None:
         self.providers = providers
         self.default_route = default_route
+        self.purpose_routes = purpose_routes or {}
+        self.local_timeout_ms = local_timeout_ms
+        self.cloud_timeout_ms_fields_only = cloud_timeout_ms_fields_only
 
     async def generate(self, req: LLMRequest, *, route: Optional[List[str]] = None) -> LLMResponse:
-        route = route or self.default_route
+        if route is None:
+            route = self.purpose_routes.get(req.purpose, self.default_route)
         used_fallback = False
         attempts = 0
         last_err: Optional[Exception] = None
@@ -100,10 +113,26 @@ class LLMGateway:
 
             t0 = time.perf_counter()
             try:
-                if req.timeout_ms:
-                    content = await asyncio.wait_for(provider.generate(req), timeout=req.timeout_ms / 1000)
+                timeout_ms = req.timeout_ms
+                if timeout_ms is None:
+                    if provider.name == "local" and self.local_timeout_ms is not None:
+                        timeout_ms = self.local_timeout_ms
+                    elif (
+                        provider.name != "local"
+                        and req.purpose == "propose_fields_only"
+                        and self.cloud_timeout_ms_fields_only is not None
+                    ):
+                        timeout_ms = self.cloud_timeout_ms_fields_only
+
+                if timeout_ms is not None:
+                    content = await asyncio.wait_for(provider.generate(req), timeout=timeout_ms / 1000)
                 else:
                     content = await provider.generate(req)
+
+                if req.json_mode:
+                    parsed = json.loads(content)
+                    if not isinstance(parsed, dict):
+                        raise ValueError("LLM JSON mode must return a JSON object")
 
                 latency_ms = int((time.perf_counter() - t0) * 1000)
                 if idx > 0:
@@ -157,5 +186,27 @@ def get_llm_gateway() -> LLMGateway:
             model="gpt-4o-mini",
         ),
     }
-    default_route = [settings.llm_provider.lower()]
-    return LLMGateway(providers=providers, default_route=default_route)
+
+    if settings.llm_local_enabled and settings.llm_local_base_url and settings.llm_local_model:
+        providers["local"] = OpenAICompatProvider(
+            name="local",
+            api_key=settings.llm_local_api_key,
+            base_url=settings.llm_local_base_url,
+            model=settings.llm_local_model,
+        )
+
+    cloud_primary = settings.llm_provider.lower()
+    default_route = [cloud_primary]
+
+    purpose_routes: Dict[str, List[str]] = {}
+    if "local" in providers:
+        for purpose in settings.llm_local_purposes:
+            purpose_routes[purpose] = ["local", cloud_primary]
+
+    return LLMGateway(
+        providers=providers,
+        default_route=default_route,
+        purpose_routes=purpose_routes,
+        local_timeout_ms=settings.llm_local_timeout_ms,
+        cloud_timeout_ms_fields_only=settings.llm_cloud_timeout_ms_fields_only,
+    )

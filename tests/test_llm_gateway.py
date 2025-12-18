@@ -89,3 +89,71 @@ async def test_llm_gateway_all_providers_fail_raises():
                 timeout_ms=1,
             )
         )
+
+
+async def test_llm_gateway_purpose_route_selects_local_first():
+    local = StubProvider(name="local", content="{}")
+    cloud = StubProvider(name="cloud", content="{}")
+    gw = LLMGateway(
+        providers={"local": local, "cloud": cloud},
+        default_route=["cloud"],
+        purpose_routes={"propose_fields_only": ["local", "cloud"]},
+    )
+    res = await gw.generate(
+        LLMRequest(
+            purpose="propose_fields_only",
+            system_prompt="sys",
+            user_prompt="user",
+            temperature=0.0,
+            json_mode=True,
+        )
+    )
+    assert res.provider == "local"
+    assert local.calls == 1
+    assert cloud.calls == 0
+
+
+async def test_llm_gateway_local_timeout_falls_back_to_cloud():
+    local = StubProvider(name="local", delay_s=0.2, content="{}")
+    cloud = StubProvider(name="cloud", content="{}")
+    gw = LLMGateway(
+        providers={"local": local, "cloud": cloud},
+        default_route=["cloud"],
+        purpose_routes={"propose_fields_only": ["local", "cloud"]},
+        local_timeout_ms=10,
+        cloud_timeout_ms_fields_only=1000,
+    )
+    res = await gw.generate(
+        LLMRequest(
+            purpose="propose_fields_only",
+            system_prompt="sys",
+            user_prompt="user",
+            temperature=0.0,
+            json_mode=True,
+        )
+    )
+    assert res.provider == "cloud"
+    assert res.attempts == 2
+    assert res.used_fallback is True
+
+
+async def test_llm_gateway_invalid_json_falls_back():
+    local = StubProvider(name="local", content="NOT JSON")
+    cloud = StubProvider(name="cloud", content="{}")
+    gw = LLMGateway(
+        providers={"local": local, "cloud": cloud},
+        default_route=["cloud"],
+        purpose_routes={"propose_fields_only": ["local", "cloud"]},
+    )
+    res = await gw.generate(
+        LLMRequest(
+            purpose="propose_fields_only",
+            system_prompt="sys",
+            user_prompt="user",
+            temperature=0.0,
+            json_mode=True,
+        )
+    )
+    assert res.provider == "cloud"
+    assert res.attempts == 2
+    assert res.used_fallback is True
