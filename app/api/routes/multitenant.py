@@ -5,7 +5,6 @@ These routes require tenant authentication (X-Tenant-ID, X-Platform, X-API-Key h
 Used by platform-specific frontends (Freshdesk, Zendesk, etc.)
 """
 
-from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,7 +15,6 @@ from app.middleware.tenant_auth import TenantContext, get_tenant_context, get_op
 from app.models.session import ChatRequest, ChatResponse
 from app.services.chat_usecase import ChatUsecase, get_chat_usecase
 from app.services.multitenant_chat_handler import MultitenantChatHandler, get_multitenant_chat_handler
-from app.services.session_repository import SessionRepository, get_session_repository
 
 router = APIRouter(tags=["multitenant"])
 
@@ -58,44 +56,23 @@ async def multitenant_chat_stream(
     sources: Optional[List[str]] = Query(None),
     product: Optional[str] = Query(None),
     tenant: TenantContext = Depends(get_tenant_context),
-    handler: Optional[MultitenantChatHandler] = Depends(get_multitenant_chat_handler),
-    repository: SessionRepository = Depends(get_session_repository),
+    usecase: ChatUsecase = Depends(get_chat_usecase),
 ) -> StreamingResponse:
     """
     Streaming multitenant chat endpoint.
     
     Requires authentication headers (same as POST /chat).
     """
-    if not handler:
-        async def error_stream():
-            yield _format_sse("error", {"message": "Chat service not available"})
-        return StreamingResponse(error_stream(), media_type="text/event-stream")
-    
     request = ChatRequest(
         sessionId=session_id,
         query=query,
         sources=sources,
         commonProduct=product,
     )
-    
-    # Get conversation history (simplified for streaming)
-    session = await repository.get(session_id)
-    history: List[str] = []
-    if session and isinstance(session, dict):
-        raw_history = session.get("questionHistory", [])
-        history = [str(entry) for entry in raw_history if isinstance(entry, str)][-4:]
-    
+
     async def event_stream():
-        response_text = ""
-        async for event in handler.stream_handle(
-            request,
-            tenant,
-            history=history,
-        ):
+        async for event in usecase.stream_multitenant_chat(request, tenant=tenant):
             yield _format_sse(event["event"], event["data"])
-            if event["event"] == "result":
-                response_text = event["data"].get("text", "")
-                await repository.append_turn(session_id, query, response_text)
     
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
