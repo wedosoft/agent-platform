@@ -26,6 +26,10 @@ def test_channel_bff_routes_exist_and_chat_is_unique():
     assert seen.count(("/api/chat", "POST")) == 1
     assert seen.count(("/api/chat/stream", "GET")) == 1
 
+    # PR5에서 `/api/web/v1`로 노출되던 유틸 엔드포인트 호환 유지
+    assert ("/api/web/v1/tenant/info", "GET") in seen
+    assert ("/api/web/v1/health", "GET") in seen
+
 
 def test_fdk_v1_chat_works(test_client, override_pipeline_client):
     from app.main import app as app_main
