@@ -100,3 +100,4 @@
   - `/api/chat*` 호출 시 `route`, `channel(legacy)`, `has_tenant_headers` 같은 태그를 남기기
   - 단, 응답/동작에는 영향 없게(관측 전용)
   - 구현 예: `app/middleware/legacy_observability.py`
+  - 운영 플레이북: `docs/renewal/LEGACY_OBSERVABILITY_PLAYBOOK.md`

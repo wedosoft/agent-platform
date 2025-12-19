@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 import time
+import json
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
+from app.middleware.request_id import get_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -38,16 +40,21 @@ class LegacyRouteObservabilityMiddleware(BaseHTTPMiddleware):
             query = (request.query_params.get("query") or "").strip()
             query_len = len(query)
 
+        payload = {
+            "event": "legacy_request",
+            "request_id": get_request_id(),
+            "route": path,
+            "method": request.method,
+            "status": response.status_code,
+            "elapsed_ms": elapsed_ms,
+            "has_tenant_headers": has_tenant_headers,
+            "tenant_id": tenant_id or None,
+            "platform": platform or None,
+            "query_len": query_len,
+        }
+
         logger.info(
-            "legacy_request route=%s method=%s status=%s elapsed_ms=%s has_tenant_headers=%s tenant_id=%s platform=%s query_len=%s",
-            path,
-            request.method,
-            response.status_code,
-            elapsed_ms,
-            has_tenant_headers,
-            tenant_id or "-",
-            platform or "-",
-            query_len if query_len is not None else "-",
+            "legacy_request_json %s",
+            json.dumps(payload, ensure_ascii=False),
         )
         return response
-
