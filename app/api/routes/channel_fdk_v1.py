@@ -15,6 +15,54 @@ router = APIRouter(prefix="/fdk/v1", tags=["channel:fdk"])
 
 _LOGICAL_SOURCE_KEYS: set[str] = {"tickets", "articles", "common"}
 
+_FDK_400_EXAMPLES: Dict[str, Any] = {
+    "missing_sources": {
+        "summary": "sources 누락",
+        "value": {"detail": "FDK 채널에서는 sources가 필수입니다."},
+    },
+    "missing_common_product": {
+        "summary": "commonProduct(product) 누락",
+        "value": {
+            "detail": {
+                "error": "MISSING_COMMON_PRODUCT",
+                "message": "FDK 채널에서는 commonProduct(product)가 필수입니다.",
+            }
+        },
+    },
+    "invalid_sources": {
+        "summary": "sources allowlist 위반",
+        "value": {
+            "detail": {
+                "error": "INVALID_SOURCES",
+                "message": "FDK 채널에서 허용되지 않는 sources가 포함되어 있습니다.",
+                "invalid": ["invalid-source"],
+                "allowedSourceKeys": ["tickets", "articles", "common"],
+            }
+        },
+    },
+    "invalid_sources_combination": {
+        "summary": "sources 조합 규칙 위반",
+        "value": {
+            "detail": {
+                "error": "INVALID_SOURCES_COMBINATION",
+                "message": "common 단독 sources는 허용되지 않습니다. tickets 또는 articles를 함께 포함하세요.",
+                "sources": ["common"],
+            }
+        },
+    },
+}
+
+_FDK_COMMON_400_RESPONSES: Dict[int, Any] = {
+    400: {
+        "description": "FDK 채널 입력 계약 위반",
+        "content": {
+            "application/json": {
+                "examples": _FDK_400_EXAMPLES,
+            }
+        },
+    }
+}
+
 
 def _get_allowed_sources() -> set[str]:
     """
@@ -109,7 +157,12 @@ def _format_sse(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-@router.post("/chat", response_model=ChatResponse, response_model_by_alias=True)
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+    response_model_by_alias=True,
+    responses=_FDK_COMMON_400_RESPONSES,
+)
 async def fdk_chat(
     request: ChatRequest,
     tenant: Optional[TenantContext] = Depends(get_optional_tenant_context),
@@ -125,7 +178,10 @@ async def fdk_chat(
     return await usecase.handle_legacy_chat(request, tenant=tenant)
 
 
-@router.get("/chat/stream")
+@router.get(
+    "/chat/stream",
+    responses=_FDK_COMMON_400_RESPONSES,
+)
 async def fdk_chat_stream(
     session_id: str = Query(..., alias="sessionId"),
     query: str = Query(...),
