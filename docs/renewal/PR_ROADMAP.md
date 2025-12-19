@@ -40,7 +40,7 @@
 | PR9 | FDK 채널 sources 필수 | 머지 |  | `feat/pr9-fdk-sources-required` | https://github.com/wedosoft/agent-platform/pull/16 | sources 누락 시 400 |
 | PR10 | FDK sources allowlist 검증 | 머지 |  | `feat/pr10-fdk-sources-allowlist` | https://github.com/wedosoft/agent-platform/pull/18 | `docs/renewal/PR10.md` |
 | PR11 | FDK commonProduct 필수 + sources 조합 제한 | 머지 |  | `feat/pr11-fdk-commonproduct-sources-combo` | https://github.com/wedosoft/agent-platform/pull/20 | `docs/renewal/PR11.md` |
-| PR12 | FDK 채널 계약(OpenAPI 예시 + 단일 참조 문서) | 리뷰 |  | `docs/pr12-fdk-contract-openapi` | https://github.com/wedosoft/agent-platform/pull/22 | `docs/renewal/FDK_CHANNEL_CONTRACT.md` |
+| PR12 | FDK 채널 계약(OpenAPI 예시 + 단일 참조 문서) | 머지 |  | `docs/pr12-fdk-contract-openapi` | https://github.com/wedosoft/agent-platform/pull/22 | `docs/renewal/FDK_CHANNEL_CONTRACT.md` |
 
 ## 인수인계/상태 공유
 
