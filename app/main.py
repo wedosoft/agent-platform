@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.router import get_api_router
 from app.core.config import get_settings
+from app.middleware.legacy_observability import LegacyRouteObservabilityMiddleware
 from app.middleware.request_id import RequestIdLogFilter, RequestIdMiddleware
 from app.services.scheduler_service import get_scheduler_service
 
@@ -80,6 +81,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(LegacyRouteObservabilityMiddleware)
 app.add_middleware(RequestIdMiddleware)
 app.include_router(get_api_router())
 
