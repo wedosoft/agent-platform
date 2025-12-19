@@ -13,12 +13,71 @@ from app.services.multitenant_chat_handler import MultitenantChatHandler, get_mu
 
 router = APIRouter(prefix="/web/v1", tags=["channel:web"])
 
+_WEB_AUTH_ERROR_EXAMPLES: Dict[str, Any] = {
+    "missing_tenant_id": {
+        "summary": "X-Tenant-ID 누락",
+        "value": {"detail": "X-Tenant-ID header is required"},
+    },
+    "missing_platform": {
+        "summary": "X-Platform 누락",
+        "value": {"detail": "X-Platform header is required"},
+    },
+    "missing_api_key": {
+        "summary": "X-API-Key 누락",
+        "value": {"detail": "X-API-Key header is required"},
+    },
+    "invalid_api_key": {
+        "summary": "API Key 검증 실패",
+        "value": {"detail": "Invalid API key for the specified platform and tenant"},
+    },
+    "unsupported_platform": {
+        "summary": "지원하지 않는 platform",
+        "value": {"detail": "Unsupported platform: unknown. Supported: freshdesk, zendesk, web"},
+    },
+}
+
+_WEB_ERROR_RESPONSES: Dict[int, Any] = {
+    400: {
+        "description": "요청 형식 오류(예: platform 값)",
+        "content": {"application/json": {"examples": {"unsupported_platform": _WEB_AUTH_ERROR_EXAMPLES["unsupported_platform"]}}},
+    },
+    401: {
+        "description": "인증 헤더 누락",
+        "content": {
+            "application/json": {
+                "examples": {
+                    "missing_tenant_id": _WEB_AUTH_ERROR_EXAMPLES["missing_tenant_id"],
+                    "missing_platform": _WEB_AUTH_ERROR_EXAMPLES["missing_platform"],
+                    "missing_api_key": _WEB_AUTH_ERROR_EXAMPLES["missing_api_key"],
+                }
+            }
+        },
+    },
+    403: {
+        "description": "API Key 검증 실패",
+        "content": {"application/json": {"examples": {"invalid_api_key": _WEB_AUTH_ERROR_EXAMPLES["invalid_api_key"]}}},
+    },
+    503: {
+        "description": "채팅 서비스 미사용/미설정",
+        "content": {
+            "application/json": {
+                "examples": {
+                    "chat_service_unavailable": {
+                        "summary": "Chat service not available",
+                        "value": {"detail": "Chat service not available. Check Gemini API configuration."},
+                    }
+                }
+            }
+        },
+    },
+}
+
 
 def _format_sse(event: str, data: Dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post("/chat", response_model=ChatResponse, responses=_WEB_ERROR_RESPONSES)
 async def web_chat(
     request: ChatRequest,
     tenant: TenantContext = Depends(get_tenant_context),
@@ -35,7 +94,7 @@ async def web_chat(
     return await usecase.handle_multitenant_chat(request, tenant=tenant)
 
 
-@router.get("/chat/stream")
+@router.get("/chat/stream", responses=_WEB_ERROR_RESPONSES)
 async def web_chat_stream(
     session_id: str = Query(..., alias="sessionId"),
     query: str = Query(...),
@@ -86,4 +145,3 @@ async def web_health_check(
         "authenticated": tenant is not None,
         "tenant_id": tenant.tenant_id if tenant else None,
     }
-
