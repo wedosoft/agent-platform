@@ -78,3 +78,8 @@
 
 전환 원칙/가드레일은 `docs/renewal/LEGACY_TRANSITION_PLAN.md`를 따릅니다.
 
+## 6) Fly 운영: 외부 로그 플랫폼 연결
+
+Fly 운영 환경에서 “대시보드/알람까지” 연결하려면, 아래 플레이북을 참고합니다.
+
+- `docs/renewal/FLY_LOG_DRAIN_PLAYBOOK.md`
