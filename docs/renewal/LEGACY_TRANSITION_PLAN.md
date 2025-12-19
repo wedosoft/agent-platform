@@ -99,4 +99,4 @@
 - 레거시 호출 관측(로그/메트릭)
   - `/api/chat*` 호출 시 `route`, `channel(legacy)`, `has_tenant_headers` 같은 태그를 남기기
   - 단, 응답/동작에는 영향 없게(관측 전용)
-
+  - 구현 예: `app/middleware/legacy_observability.py`
