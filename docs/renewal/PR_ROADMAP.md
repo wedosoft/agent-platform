@@ -44,7 +44,7 @@
 | PR13 | WEB 채널 계약(OpenAPI 예시 + 단일 참조 문서) | 머지 |  | `docs/pr13-web-contract-openapi` | https://github.com/wedosoft/agent-platform/pull/24 | `docs/renewal/WEB_CHANNEL_CONTRACT.md` |
 | PR14 | 레거시(`/api/chat*`) 전환 계획(운영 레거시 고려) | 머지 |  | `docs/pr14-legacy-transition-guardrails` | https://github.com/wedosoft/agent-platform/pull/26 | `docs/renewal/LEGACY_TRANSITION_PLAN.md` |
 | PR15 | 레거시(`/api/chat*`) 호출 관측(로그) | 머지 |  | `chore/pr15-legacy-chat-observability` | https://github.com/wedosoft/agent-platform/pull/28 |  |
-| PR16 | 레거시 관측 로그 구조화 + 대시보드 플레이북 | 리뷰 |  | `chore/pr16-legacy-observability-dashboards` | https://github.com/wedosoft/agent-platform/pull/30 | `docs/renewal/LEGACY_OBSERVABILITY_PLAYBOOK.md` |
+| PR16 | 레거시 관측 로그 구조화 + 대시보드 플레이북 | 머지 |  | `chore/pr16-legacy-observability-dashboards` | https://github.com/wedosoft/agent-platform/pull/30 | `docs/renewal/LEGACY_OBSERVABILITY_PLAYBOOK.md` |
 
 ## 인수인계/상태 공유
 
