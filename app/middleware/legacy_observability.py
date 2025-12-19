@@ -54,7 +54,7 @@ class LegacyRouteObservabilityMiddleware(BaseHTTPMiddleware):
         }
 
         logger.info(
-            "legacy_request_json %s",
+            "%s",
             json.dumps(payload, ensure_ascii=False),
         )
         return response
