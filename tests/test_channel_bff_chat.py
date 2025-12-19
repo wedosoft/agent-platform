@@ -48,6 +48,7 @@ def test_fdk_v1_chat_works(test_client, override_pipeline_client):
             "sessionId": session_id,
             "query": "hello",
             "sources": ["tickets"],
+            "commonProduct": "제품A",
         },
     )
     assert res.status_code == 200
