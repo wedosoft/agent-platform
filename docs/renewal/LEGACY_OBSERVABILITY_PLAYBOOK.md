@@ -5,10 +5,7 @@
 
 ## 1) 수집 대상 로그
 
-레거시 관측 로그는 아래 패턴으로 찍힙니다.
-
-- prefix: `legacy_request_json`
-- payload: JSON 문자열(파싱 가능)
+레거시 관측 로그는 **JSON 한 줄**로 찍힙니다(파싱 가능).
 
 구현: `app/middleware/legacy_observability.py`
 
@@ -27,13 +24,18 @@
 
 > 민감정보 주의: API key/쿼리 본문은 로깅하지 않습니다(길이만 기록).
 
+### Fly Log Shipper(Loki) 호환성
+
+Fly Log Shipper의 Loki 설정은 “`.message`가 `{`로 시작하면 JSON을 파싱”합니다.
+따라서 이 로그는 prefix 없이 JSON 한 줄로 출력합니다.
+
 ## 2) “지금 당장” 확인(운영 서버 로그)
 
 예시(로그 플랫폼 불문):
 
-- 레거시 호출만 보기: `legacy_request_json`
-- 스트림만 보기: `legacy_request_json` + `"/api/chat/stream"`
-- 상태코드 4xx/5xx 보기: `legacy_request_json` + `"status":4` 또는 `"status":5`
+- 레거시 호출만 보기: `"event":"legacy_request"`
+- 스트림만 보기: `"event":"legacy_request"` + `"/api/chat/stream"`
+- 상태코드 4xx/5xx 보기: `"event":"legacy_request"` + `"status":4` 또는 `"status":5`
 
 ## 3) 대시보드(추천 패널)
 

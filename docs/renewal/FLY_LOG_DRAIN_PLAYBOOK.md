@@ -40,7 +40,7 @@
 mkdir -p fly-log-shipper && cd fly-log-shipper
 
 # 2) Log Shipper 이미지로 launch (deploy는 나중에)
-flyctl launch --no-deploy --image ghcr.io/superfly/fly-log-shipper:latest
+flyctl launch --no-deploy --no-public-ips --image flyio/log-shipper:latest
 ```
 
 ### B-3) 권한(토큰)과 구독(Subject) 설정
@@ -69,31 +69,20 @@ flyctl secrets set \
 
 ### B-4) 외부 로그 플랫폼으로 보내기(예시: Loki)
 
-Log Shipper는 내부적으로 Vector 설정을 사용하므로, 선택한 플랫폼에 맞는 sink 설정이 필요합니다.
-아래는 “Loki로 보내는” 형태의 예시(플레이스홀더)입니다.
+Log Shipper는 환경 변수(시크릿)에 따라 Loki sink를 활성화합니다.
+Loki로 보내려면 아래 시크릿을 설정합니다(Secret 이름 고정):
 
-```toml
-# vector.toml (예시)
-[sources.fly_logs]
-type = "fly_logs"
-org = "${ORG}"
-access_token = "${ACCESS_TOKEN}"
-subject = "${SUBJECT}"
+- `LOKI_URL`
+- `LOKI_USERNAME`
+- `LOKI_PASSWORD`
 
-[sinks.loki]
-type = "loki"
-inputs = ["fly_logs"]
-endpoint = "${LOKI_ENDPOINT}"
-labels.app = "agent-platform"
-labels.env = "${ENVIRONMENT}"
-encoding.codec = "json"
-```
-
-그 다음 shipper 앱에 환경 변수/시크릿을 추가하고, Vector 설정을 shipper 앱에 주입한 뒤 배포합니다.
+그 다음 shipper 앱에 시크릿을 추가하고 배포합니다.
 
 ```bash
 flyctl secrets set \
-  LOKI_ENDPOINT="<https://...>" \
+  LOKI_URL="<https://.../loki/api/v1/push>" \
+  LOKI_USERNAME="<username>" \
+  LOKI_PASSWORD="<password>" \
   ENVIRONMENT="<prod|staging>"
 
 # 배포(구체적인 config 주입 방식은 운영 환경 선택에 따라 다르므로, 팀 표준으로 고정 필요)
@@ -111,8 +100,7 @@ flyctl deploy
 
 ## 운영 체크리스트(권장)
 
-- [ ] 외부 플랫폼에서 `legacy_request_json` 로그가 수집되는지 확인
+- [ ] 외부 플랫폼에서 `"event":"legacy_request"` 로그가 수집되는지 확인
 - [ ] JSON 파싱 규칙 설정(필드 추출)
 - [ ] 알람(5xx, p95 지연, 트래픽 급증) 1차 적용
 - [ ] 2~4주 관측 후 레거시 전환 판단(LEGACY_TRANSITION_PLAN 준수)
-
