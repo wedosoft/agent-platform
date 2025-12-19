@@ -13,6 +13,8 @@ from app.services.chat_usecase import ChatUsecase, get_chat_usecase
 
 router = APIRouter(prefix="/fdk/v1", tags=["channel:fdk"])
 
+_LOGICAL_SOURCE_KEYS: set[str] = {"tickets", "articles", "common"}
+
 
 def _get_allowed_sources() -> set[str]:
     """
@@ -33,15 +35,24 @@ def _get_allowed_sources() -> set[str]:
     return allowed
 
 
-def _validate_sources(sources: Optional[List[str]]) -> None:
+def _validate_sources(sources: Optional[List[str]]) -> List[str]:
     if not sources:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="FDK 채널에서는 sources가 필수입니다.",
         )
 
+    normalized: List[str] = []
+    seen: set[str] = set()
+    for source in sources:
+        normalized_source = (source or "").strip()
+        if normalized_source in seen:
+            continue
+        normalized.append(normalized_source)
+        seen.add(normalized_source)
+
     allowed = _get_allowed_sources()
-    invalid = [s for s in sources if s not in allowed]
+    invalid = [s for s in normalized if s not in allowed]
     if invalid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -50,6 +61,46 @@ def _validate_sources(sources: Optional[List[str]]) -> None:
                 "message": "FDK 채널에서 허용되지 않는 sources가 포함되어 있습니다.",
                 "invalid": invalid,
                 "allowedSourceKeys": ["tickets", "articles", "common"],
+            },
+        )
+
+    normalized_set = set(normalized)
+
+    # sources 조합 제한(안전한 기본 정책)
+    # 1) 논리 키(tickets/articles/common)만 사용하는 조합 OR 2) store name 1개만 사용하는 조합
+    store_names = normalized_set - _LOGICAL_SOURCE_KEYS
+    if store_names and len(normalized) != 1:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "INVALID_SOURCES_COMBINATION",
+                "message": "store name sources는 다른 sources와 함께 사용할 수 없습니다.",
+                "sources": normalized,
+            },
+        )
+
+    if not store_names:
+        # common 단독 금지(최소 tickets/articles 중 하나는 포함)
+        if normalized_set == {"common"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error": "INVALID_SOURCES_COMBINATION",
+                    "message": "common 단독 sources는 허용되지 않습니다. tickets 또는 articles를 함께 포함하세요.",
+                    "sources": normalized,
+                },
+            )
+
+    return normalized
+
+
+def _validate_common_product(common_product: Optional[str]) -> None:
+    if not common_product or not common_product.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "MISSING_COMMON_PRODUCT",
+                "message": "FDK 채널에서는 commonProduct(product)가 필수입니다.",
             },
         )
 
@@ -69,7 +120,8 @@ async def fdk_chat(
     - 현재는 레거시 chat 동작과 동일(하위호환/점진 전환 목적)
     - 향후 채널별 기본값/검증/권한을 이 레이어에서만 추가
     """
-    _validate_sources(request.sources)
+    request.sources = _validate_sources(request.sources)
+    _validate_common_product(request.common_product)
     return await usecase.handle_legacy_chat(request, tenant=tenant)
 
 
@@ -85,15 +137,16 @@ async def fdk_chat_stream(
     tenant: Optional[TenantContext] = Depends(get_optional_tenant_context),
     usecase: ChatUsecase = Depends(get_chat_usecase),
 ) -> StreamingResponse:
-    _validate_sources(sources)
+    normalized_sources = _validate_sources(sources)
     request = ChatRequest(
         sessionId=session_id,
         query=query,
         ragStoreName=rag_store_name,
-        sources=sources or None,
+        sources=normalized_sources,
         commonProduct=product or legacy_common_product,
         clarificationOption=clarification_option,
     )
+    _validate_common_product(request.common_product)
 
     async def event_stream():
         async for event in usecase.stream_legacy_chat(request, tenant=tenant):
