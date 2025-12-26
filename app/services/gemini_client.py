@@ -4,8 +4,6 @@ import json
 import logging
 from typing import Any, AsyncGenerator, Iterable, List, Optional
 
-from google import genai
-
 from app.core.config import get_settings
 from app.models.metadata import MetadataFilter
 
@@ -77,6 +75,17 @@ class GeminiClient:
             raise GeminiClientError("Gemini API key is required")
         if not primary_model:
             raise GeminiClientError("Gemini model name is required")
+
+        try:
+            # NOTE: google-genai 패키지는 `google.genai` 네임스페이스로 제공됩니다.
+            # 환경에 따라 `google` 네임스페이스 패키지 충돌이 발생할 수 있어
+            # 모듈 import 시점에 바로 터지지 않도록 지연 import를 사용합니다.
+            from google import genai  # type: ignore
+        except ImportError as exc:
+            raise GeminiClientError(
+                "google-genai 패키지가 필요합니다. 가상환경(venv)에서 의존성을 설치한 뒤 다시 실행해 주세요."
+            ) from exc
+
         self.client = genai.Client(api_key=api_key)
         self.models = [primary_model]
         if fallback_model and fallback_model not in self.models:

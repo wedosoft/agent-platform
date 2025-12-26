@@ -1,0 +1,116 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ticket_normalized_v1",
+  "title": "Normalized Ticket Input",
+  "description": "Schema for normalized ticket data input to the analysis API",
+  "type": "object",
+  "required": ["ticket_id"],
+  "properties": {
+    "ticket_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for the ticket"
+    },
+    "subject": {
+      "type": ["string", "null"],
+      "description": "Ticket subject line"
+    },
+    "description": {
+      "type": ["string", "null"],
+      "description": "Ticket description (HTML)"
+    },
+    "description_text": {
+      "type": ["string", "null"],
+      "description": "Ticket description (plain text)"
+    },
+    "priority": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 4,
+      "description": "Priority level (1=Low, 2=Medium, 3=High, 4=Urgent)"
+    },
+    "status": {
+      "type": ["integer", "null"],
+      "description": "Ticket status code"
+    },
+    "source": {
+      "type": ["integer", "null"],
+      "description": "Source channel (1=Email, 2=Portal, etc.)"
+    },
+    "type": {
+      "type": ["string", "null"],
+      "description": "Ticket type classification"
+    },
+    "tags": {
+      "type": "array",
+      "items": {"type": "string"},
+      "default": [],
+      "description": "List of tags"
+    },
+    "requester_id": {
+      "type": ["integer", "null"],
+      "description": "ID of the requester"
+    },
+    "responder_id": {
+      "type": ["integer", "null"],
+      "description": "ID of the assigned agent"
+    },
+    "group_id": {
+      "type": ["integer", "null"],
+      "description": "ID of the assigned group"
+    },
+    "custom_fields": {
+      "type": "object",
+      "additionalProperties": true,
+      "default": {},
+      "description": "Custom field values"
+    },
+    "conversations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": ["integer", "null"]},
+          "body": {"type": ["string", "null"]},
+          "body_text": {"type": ["string", "null"]},
+          "incoming": {"type": "boolean"},
+          "private": {"type": "boolean"},
+          "source": {"type": ["integer", "null"]},
+          "user_id": {"type": ["integer", "null"]},
+          "created_at": {"type": ["string", "null"]}
+        }
+      },
+      "default": [],
+      "description": "Conversation thread"
+    },
+    "ticket_fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": ["integer", "null"]},
+          "name": {"type": "string"},
+          "label": {"type": ["string", "null"]},
+          "label_for_customers": {"type": ["string", "null"]},
+          "type": {"type": "string"},
+          "choices": {"type": ["array", "object", "null"]},
+          "required_for_customers": {"type": "boolean"},
+          "required_for_agents": {"type": "boolean"}
+        }
+      },
+      "default": [],
+      "description": "Available ticket field definitions"
+    },
+    "created_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Ticket creation timestamp"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Last update timestamp"
+    }
+  },
+  "additionalProperties": true
+}

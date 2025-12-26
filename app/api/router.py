@@ -16,6 +16,7 @@ from app.api.routes import (
     pipeline,
     sessions,
     sync,
+    tickets,
 )
 from app.core.config import get_settings
 
@@ -42,4 +43,5 @@ def get_api_router() -> APIRouter:
     router.include_router(sync.router, prefix="/sync")  # Sync API for data synchronization
     router.include_router(onboarding.router)  # Onboarding API
     router.include_router(curriculum.router)  # Curriculum API for product training
+    router.include_router(tickets.router)  # Ticket Analysis API (schema-validated)
     return router
