@@ -13,14 +13,15 @@ primary_region = 'nrt'
   # fly-log-shipper(Vector API) 기본 포트
   internal_port = 8686
   force_https = true
-  # 로그 수집은 항상 켜져 있어야 하므로 auto-stop 비활성화
-  auto_stop_machines = 'off'
+  # 비용 절감을 위해 유휴 시 auto-stop 허용
+  auto_stop_machines = 'stop'
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
+  max_machines_running = 1
   processes = ['app']
 
 [[vm]]
-  memory = '1gb'
+  memory = '512mb'
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 1024
+  memory_mb = 512
