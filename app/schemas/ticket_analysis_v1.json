@@ -1,0 +1,153 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ticket_analysis_v1",
+  "title": "Ticket Analysis Output",
+  "description": "Schema for structured ticket analysis response",
+  "type": "object",
+  "required": ["analysis_id", "ticket_id", "status", "gate"],
+  "properties": {
+    "analysis_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this analysis run"
+    },
+    "ticket_id": {
+      "type": "string",
+      "description": "ID of the analyzed ticket"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "failed", "partial"],
+      "description": "Analysis completion status"
+    },
+    "gate": {
+      "type": "string",
+      "enum": ["CONFIRM", "EDIT", "DECIDE", "TEACH"],
+      "description": "UI mode gate decision for agent workflow"
+    },
+    "analysis": {
+      "type": "object",
+      "description": "Core analysis results",
+      "properties": {
+        "narrative": {
+          "type": "object",
+          "properties": {
+            "summary": {
+              "type": "string",
+              "description": "1-2 sentence situation summary"
+            },
+            "timeline": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "timestamp": {"type": ["string", "null"]},
+                  "event": {"type": "string"},
+                  "actor": {"type": "string", "enum": ["customer", "agent", "system"]}
+                }
+              },
+              "description": "Key events in chronological order"
+            }
+          }
+        },
+        "root_cause": {
+          "type": ["string", "null"],
+          "description": "Identified root cause of the issue"
+        },
+        "resolution": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "step": {"type": "integer"},
+              "action": {"type": "string"},
+              "rationale": {"type": ["string", "null"]}
+            }
+          },
+          "description": "Recommended resolution steps"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Overall analysis confidence score"
+        },
+        "open_questions": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Questions that need clarification"
+        },
+        "risk_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["escalation_risk", "churn_risk", "compliance_risk", "sla_breach", "vip_customer", "technical_complexity"]
+          },
+          "description": "Risk indicators"
+        },
+        "intent": {
+          "type": "string",
+          "enum": ["inquiry", "complaint", "request", "technical_issue", "feedback", "unknown"],
+          "description": "Primary customer intent"
+        },
+        "sentiment": {
+          "type": "string",
+          "enum": ["positive", "neutral", "negative", "urgent"],
+          "description": "Customer sentiment"
+        },
+        "field_proposals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["field_name", "proposed_value"],
+            "properties": {
+              "field_name": {"type": "string"},
+              "field_label": {"type": ["string", "null"]},
+              "current_value": {},
+              "proposed_value": {},
+              "reason": {"type": "string"},
+              "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+            }
+          },
+          "description": "Suggested field value updates"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source_type": {
+                "type": "string",
+                "enum": ["conversation", "ticket_field", "kb_article", "similar_case", "policy"]
+              },
+              "source_id": {"type": ["string", "null"]},
+              "excerpt": {"type": "string"},
+              "relevance_score": {"type": "number", "minimum": 0, "maximum": 1}
+            }
+          },
+          "description": "Supporting evidence for analysis"
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "description": "Execution metadata",
+      "properties": {
+        "llm_provider": {"type": "string"},
+        "llm_model": {"type": "string"},
+        "prompt_version": {"type": "string"},
+        "latency_ms": {"type": "integer"},
+        "token_usage": {
+          "type": "object",
+          "properties": {
+            "input": {"type": "integer"},
+            "output": {"type": "integer"}
+          }
+        },
+        "retrieval_count": {"type": "integer"},
+        "created_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  },
+  "additionalProperties": false
+}
