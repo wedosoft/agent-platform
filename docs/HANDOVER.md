@@ -1,37 +1,107 @@
 # Agent Platform Handover
 
 ## 1. 프로젝트 개요
-- **목표**: Google File Search 도구에서 검증된 RAG 성능과 출처 표기를 FastAPI 백엔드로 이식해 멀티 에이전트(우선 Freshservice/SKB)에서 재사용.
-- **핵심 구성요소**
-  - 테넌트 기반 설정(`config/tenants.local.json`)으로 제품·스토어·메타 필터를 선언적으로 관리
-  - `/api/agents/*` 라우트: 세션 생성, 상태 조회, 사용자 쿼리를 Gemini File Search + Freshdesk 검색에 연결
-  - `AgentChatService`: analyzer 결과 + 제품 메타 필터 + Freshdesk 검색 계획을 하나의 응답 페이로드로 묶음
 
-## 2. 현재 완료 사항
-| 영역 | 상세 내용 |
-| --- | --- |
-| 테넌트 로딩 | `TenantRegistry`가 env 문자열 또는 파일 경로(`AGENT_PLATFORM_TENANT_CONFIG_PATH`)에서 구성을 불러옴 |
-| 세션 관리 | `/api/session` 및 `/api/agents/{tenant}/session`가 동일한 TTL/타임스탬프 포맷으로 세션 저장 |
-| RAG 필터링 | `commonProduct` 요청 파라미터가 우선순위로 메타데이터 필터·필터 요약에 반영돼 제품별 검색을 강제 |
-| Freshdesk 연동 | Analyzer와 Freshdesk Search Service가 ticket ID → metadata filter 형태로 RAG와 연계 |
-| 테스트 | `tests/test_agent_chat_service.py`, `tests/test_agents.py` 추가. `source venv/bin/activate && pytest tests/test_agent_chat_service.py tests/test_agents.py` 통과 확인 |
+### 1.1 목표
+- **핵심 전환**: Freshdesk 티켓 "답장 생성" → "분석 리포트 생성"
+- **출력 형식**: 자연어 답장이 아닌 구조화된 `ticket_analysis_v1` JSON
+- **Gate 시스템**: 상담원 UI 모드 결정 (`CONFIRM`, `EDIT`, `DECIDE`, `TEACH`)
 
-## 3. 남은 과제 / 다음 단계
-1. **프런트엔드 연동**
-   - Next.js(또는 google-file-saerch-tool)에서 기존 `/pipeline/*` 호출 대신 `/api/agents/{tenant}` 엔드포인트 사용하도록 전환
-   - `commonProduct` 라디오/셀렉트 값을 그대로 전달해 제품 고정 필터가 동작하는지 확인
-2. **추가 테넌트 정의**
-   - `config/tenants.local.json`에 다른 제품군(예: Monday.com, Google Workspace)을 추가하고 QA
-   - 운영 환경에서는 동일 구조의 JSON을 Secrets Manager 또는 ConfigMap으로 주입
-3. **Freshdesk 자격 정보**
-   - `.env.local`에 `AGENT_PLATFORM_FRESHDESK_DOMAIN`, `AGENT_PLATFORM_FRESHDESK_API_KEY`를 채워 실제 티켓 검색 플로우 검증
-4. **스모크 테스트**
-   - `uvicorn app.main:app --reload`로 서버를 띄운 뒤 Postman 혹은 curl로 `/api/agents/{tenant}/session → /chat` 순서 검증
-   - 응답의 `groundingChunks`, `freshdeskTickets`가 기대 포맷인지 확인하고 로그 수집 지표 정의
-5. **배포 준비**
-   - `docs/DEPLOYMENT.md` 기준으로 새로운 환경 변수를 명시하고, Terraform/Infra repo에 공유
+### 1.2 핵심 구성요소
+- **Backend (agent-platform)**: FastAPI 기반 분석 API
+- **Frontend (project-a)**: Freshdesk Custom App (FDK v3.0)
+- **참고 논문**: Reflexion (2303.11366), Generative Agents (2304.03442)
+
+### 1.3 상세 계획
+- [docs/born-again/pr-instruction.md](./born-again/pr-instruction.md) - 3 PR 리팩터링 계획
+
+---
+
+## 2. 리팩터링 로드맵 (3 PR)
+
+### PR1 — Schemas + Validator + Analyze API Skeleton
+| 항목 | 내용 |
+|------|------|
+| 목적 | "스키마가 곧 법"을 코드로 강제, 프론트와 병렬 개발 가능 |
+| 스키마 | `ticket_normalized_v1.json`, `ticket_analysis_v1.json` |
+| API | `POST /api/tickets/{ticket_id}/analyze` |
+| 에러 | 400: `INVALID_INPUT_SCHEMA`, 500: `ANALYSIS_FAILED` |
+
+### PR2 — Orchestrator + Prompt Registry + Persist
+| 항목 | 내용 |
+|------|------|
+| 목적 | 실제 분석 파이프라인, 재현/비교/학습 가능한 저장 |
+| Prompt Registry | `ticket_analysis_cot_v1.yaml` (versioned prompts) |
+| Orchestrator | `run_ticket_analysis(input, options) -> (analysis, gate, meta)` |
+| DB 테이블 | `analysis_runs`, `ticket_analyses` |
+
+### PR3 — Frontend (project-a) UI 연동
+| 항목 | 내용 |
+|------|------|
+| 목적 | 답장 중심 UI → 분석 콘솔로 전환 |
+| UI 탭 | Analyze, Evidence, Teach, History |
+| 상태 머신 | `IDLE → RUNNING → COMPLETED`, `NEEDS_REVIEW`, `ERROR` |
+
+---
+
+## 3. CS 팀장 관점: UI/UX 분석
+
+### 3.1 사용자 페르소나
+- **대상**: Freshdesk 상담원 겸 엔지니어 (기술 지원)
+- **특성**: 높은 티켓 볼륨, SLA 압박, 멀티태스킹, 기술적 배경
+
+### 3.2 채팅 방식 vs 분석 대시보드 비교
+
+| 평가 항목 | 채팅 방식 | 분석 대시보드 |
+|-----------|-----------|---------------|
+| **일관성** | ❌ 상담원별 질문 품질 편차 | ✅ 동일한 구조화된 결과 |
+| **효율성** | ❌ 왕복 대화로 지연 | ✅ 원클릭 분석 |
+| **측정 가능성** | ❌ 대화 품질 수치화 어려움 | ✅ Gate별 분포, 해결 시간 추적 |
+| **신입 온보딩** | ❌ "좋은 질문" 학습 필요 | ✅ 구조가 워크플로우 가이드 |
+| **QA** | ❌ 대화 로그 전체 검토 필요 | ✅ 구조화 데이터로 샘플링 용이 |
+| **유연성** | ✅ 후속 질문/탐색 자유 | ❌ 정해진 분석 프레임 |
+| **학습 진입장벽** | ✅ 자연어로 바로 사용 | ❌ 탭/섹션 의미 학습 필요 |
+
+### 3.3 권장 아키텍처: 하이브리드 접근
+
+```
+┌─────────────────────────────────────────────────────┐
+│  기본 UI: 분석 대시보드 (Primary)                     │
+│  ├── Analyze: 원클릭 구조화 분석                      │
+│  ├── Evidence: 근거 데이터 정리                       │
+│  ├── History: 과거 분석 비교                         │
+│  └── Teach: 교훈 기록                               │
+├─────────────────────────────────────────────────────┤
+│  보조 UI: 채팅 (Secondary, Optional)                 │
+│  └── 분석 결과 기반 후속 질문용                        │
+│  └── Edge case/복잡한 티켓에서만 활성화               │
+└─────────────────────────────────────────────────────┘
+```
+
+### 3.4 단계별 구현 권장안
+
+| 단계 | 내용 |
+|------|------|
+| **PR1-2 (MVP)** | 분석 대시보드만 구현. 채팅 탭 비활성화/제거 |
+| **운영 피드백** | 1-2개월 실사용 후 "채팅이 필요했던 케이스" 수집 |
+| **후속 PR** | 필요시 "Ask AI" 버튼으로 분석 결과 기반 후속 질문 추가 |
+
+### 3.5 결론
+
+**분석 대시보드를 Primary UI로 선택하는 이유**:
+
+1. **표준화**: 팀 전체가 일관된 품질의 분석 결과 확보
+2. **효율성**: 원클릭 → 구조화된 결과 → 고객 대기 시간 단축
+3. **측정 가능**: Gate 분포, 분석 시간, Teach 수 등 KPI 추적
+4. **확장성**: Lesson 축적으로 시스템 지속 개선
+5. **QA 용이**: 구조화된 데이터로 품질 관리 가능
+
+채팅 기능은 MVP 범위에서 제외하고, 실제 운영 피드백에서 강한 수요가 확인된 후 추가 권장.
+
+---
 
 ## 4. 실행 & 검증 가이드
+
 ```bash
 # 가상환경 활성화
 source venv/bin/activate
@@ -40,12 +110,24 @@ source venv/bin/activate
 uvicorn app.main:app --reload --port 8000
 
 # 테스트
-pytest tests/test_agent_chat_service.py tests/test_agents.py
+pytest tests/
 ```
 
-## 5. 리스크 & 메모
-- 테넌트 JSON이 비어 있으면 `/api/agents/*` 테스트가 실패하므로 CI 전에 최소 1개 테넌트 유지 필수
-- Gemini File Search Store 이름은 Google Cloud 콘솔에서 발급된 그대로 사용해야 하며, 잘못 기입 시 HTTP 500이 발생
-- Freshdesk API Key 미설정 시 티켓 검색이 자동으로 비활성화되므로, 해당 상태에 대한 UX 표시가 필요할 수 있음
+---
 
-필요 시 Slack #agent-platform 채널에서 이전 작업자(@alan)에게 문의하면 빠르게 히스토리를 확인할 수 있습니다.
+## 5. 범위 밖 (3 PR 이후)
+
+- 유사 티켓/KB 하이브리드 검색 (Retrieval 고도화)
+- Policy/Org Memory 승격 워크플로우 (PR 승인/권한)
+- 고급 평가 (정교한 score_breakdown, 위험 태그 자동 분류)
+- SSE/Webhook 기반 비동기 처리 (대형 티켓 대응)
+
+---
+
+## 6. 연락처
+
+필요 시 Slack #agent-platform 채널에서 이전 작업자(@alan)에게 문의.
+
+---
+
+*Last Updated: 2025-12*
