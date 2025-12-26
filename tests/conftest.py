@@ -175,3 +175,82 @@ def stub_freshdesk_conversations(monkeypatch):
         return []
 
     monkeypatch.setattr(FreshdeskClient, "get_all_conversations", _stub_get_all_conversations, raising=True)
+
+
+@pytest.fixture(autouse=True)
+def stub_ticket_analysis_orchestrator(request, monkeypatch):
+    """테스트에서 Ticket Analysis Orchestrator를 stub 처리.
+
+    Note: test_orchestrator.py의 TestTicketAnalysisOrchestrator 클래스는
+    자체 mock을 사용하므로 이 stub을 건너뜁니다.
+    """
+    # Skip this stub for orchestrator tests that need their own mocks
+    if request.node.get_closest_marker("no_orchestrator_stub"):
+        return
+    if "TestTicketAnalysisOrchestrator" in request.node.nodeid:
+        return
+
+    from app.services.orchestrator.ticket_analysis_orchestrator import (
+        TicketAnalysisOrchestrator,
+        AnalysisResult,
+    )
+
+    async def fake_run_ticket_analysis(
+        _self, normalized_input, options, tenant_id
+    ):
+        """Fake orchestrator that returns a valid stub response."""
+        import uuid
+        from datetime import datetime, timezone
+
+        ticket_id = normalized_input.get("ticket_id", "unknown")
+        has_description = bool(
+            normalized_input.get("description") or normalized_input.get("description_text")
+        )
+        has_conversations = bool(normalized_input.get("conversations"))
+
+        confidence = 0.5 if has_description else 0.2
+        if has_conversations:
+            confidence += 0.3
+
+        if confidence >= 0.9:
+            gate = "CONFIRM"
+        elif confidence >= 0.7:
+            gate = "EDIT"
+        elif confidence >= 0.5:
+            gate = "DECIDE"
+        else:
+            gate = "TEACH"
+
+        return AnalysisResult(
+            analysis_id=str(uuid.uuid4()),
+            analysis={
+                "narrative": {"summary": f"Stub analysis for ticket {ticket_id}", "timeline": []},
+                "root_cause": None,
+                "resolution": [],
+                "confidence": confidence,
+                "open_questions": [],
+                "risk_tags": [],
+                "intent": "inquiry",
+                "sentiment": "neutral",
+                "field_proposals": [],
+                "evidence": [],
+            },
+            gate=gate,
+            meta={
+                "llm_provider": "stub",
+                "llm_model": "stub-model",
+                "prompt_version": "ticket_analysis_cot_v1",
+                "latency_ms": 100,
+                "token_usage": {"input": 0, "output": 0},
+                "retrieval_count": 0,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+            success=True,
+        )
+
+    monkeypatch.setattr(
+        TicketAnalysisOrchestrator,
+        "run_ticket_analysis",
+        fake_run_ticket_analysis,
+        raising=True,
+    )
