@@ -57,8 +57,8 @@ class Settings(BaseSettings):
     freshdesk_domain: Optional[str] = None
     freshdesk_api_key: Optional[str] = None
 
-    # LLM Provider (deepseek or openai)
-    llm_provider: str = Field(default="deepseek")
+    # LLM Provider (gemini, openai, or deepseek)
+    llm_provider: str = Field(default="gemini")
     deepseek_api_key: Optional[str] = None
     openai_api_key: Optional[str] = Field(None, alias="OPEN_API_KEY")
 

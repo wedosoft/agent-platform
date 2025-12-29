@@ -173,6 +173,12 @@ class LLMGateway:
 def get_llm_gateway() -> LLMGateway:
     settings = get_settings()
     providers: Dict[str, LLMProvider] = {
+        "gemini": OpenAICompatProvider(
+            name="gemini",
+            api_key=settings.gemini_api_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            model="gemini-2.0-flash",
+        ),
         "deepseek": OpenAICompatProvider(
             name="deepseek",
             api_key=settings.deepseek_api_key,
