@@ -5,6 +5,15 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      build_mode:
+        description: "빌드 모드 선택 (remote=Fly Depot 원격 빌드, local=GitHub Runner 로컬 Docker 빌드)"
+        required: false
+        default: "remote"
+        type: choice
+        options:
+          - remote
+          - local
 
 jobs:
   deploy:
@@ -19,7 +28,47 @@ jobs:
       - name: Setup Fly
         uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Deploy to Fly.io
-        run: flyctl deploy --remote-only
+      - name: Diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "GITHUB_SHA=${GITHUB_SHA}"
+          git rev-parse HEAD
+          flyctl version
+
+      - name: Deploy to Fly.io (retry; supports local-only fallback)
+        shell: bash
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          MODE="${{ github.event.inputs.build_mode || 'remote' }}"
+          if [[ "$MODE" == "local" ]]; then
+            DEPLOY_ARGS=(--local-only)
+          else
+            DEPLOY_ARGS=(--remote-only)
+          fi
+
+          # Fly Depot/원격 빌더 이슈는 일시적인 경우가 많아 재시도로 흡수
+          for attempt in 1 2 3; do
+            echo "Deploy attempt ${attempt}/3 (mode=${MODE})..."
+            if flyctl deploy "${DEPLOY_ARGS[@]}"; then
+              echo "Deploy succeeded."
+              exit 0
+            fi
+            sleep_seconds=$((attempt * 30))
+            echo "Deploy failed. Retrying in ${sleep_seconds}s..."
+            sleep "${sleep_seconds}"
+          done
+
+          # remote 모드에서 계속 실패하면 local-only로 한 번 자동 폴백
+          if [[ "$MODE" != "local" ]]; then
+            echo "Remote deploy failed after retries. Trying local-only fallback..."
+            flyctl deploy --local-only
+            echo "Deploy succeeded via local-only fallback."
+            exit 0
+          fi
+
+          echo "Deploy failed after 3 attempts."
+          exit 1
