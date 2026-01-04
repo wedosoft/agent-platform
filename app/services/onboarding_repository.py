@@ -114,14 +114,14 @@ class OnboardingRepository:
                 LOGGER.warning(f"Found {len(response.data)} duplicate sessions for user '{normalized_name}', consolidating...")
                 await self._consolidate_sessions(response.data)
             
-            row = response.data[0]
-            return OnboardingSession(
-                id=row.get("id"),
-                sessionId=row["session_id"],
-                userName=row["user_name"],
-                createdAt=row.get("created_at"),
-                updatedAt=row.get("updated_at"),
-            )
+                row = response.data[0]
+                return OnboardingSession(
+                    id=row.get("id"),
+                    sessionId=row["session_id"],
+                    userName=row["user_name"],
+                    createdAt=row.get("created_at"),
+                    updatedAt=row.get("updated_at"),
+                )
         except Exception as e:
             LOGGER.error(f"Failed to get session by user_name: {e}")
             return None

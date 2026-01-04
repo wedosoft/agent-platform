@@ -510,27 +510,11 @@ async def get_all_progress():
     repo = get_onboarding_repository()
 
     try:
-        # #region agent log
-        import json
-        with open('/Users/alan/GitHub/onboarding/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"onboarding.py:507","message":"get_all_progress entry","data":{},"timestamp":int(__import__('time').time()*1000)}) + '\n')
-        # #endregion
-        
         summaries = await repo.get_all_sessions_summary()
-        
-        # #region agent log
-        with open('/Users/alan/GitHub/onboarding/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"onboarding.py:513","message":"get_all_sessions_summary result","data":{"summary_count":len(summaries),"sample_summary":summaries[0] if summaries else None},"timestamp":int(__import__('time').time()*1000)}) + '\n')
-        # #endregion
         
         # 커리큘럼 진행률도 함께 조회하여 업데이트
         from app.services.curriculum_repository import get_curriculum_repository
         curriculum_repo = get_curriculum_repository()
-        
-        # #region agent log
-        with open('/Users/alan/GitHub/onboarding/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"B","location":"onboarding.py:520","message":"starting curriculum progress lookup","data":{"summary_count":len(summaries)},"timestamp":int(__import__('time').time()*1000)}) + '\n')
-        # #endregion
         
         for summary in summaries:
             session_id = summary["sessionId"]
@@ -549,35 +533,16 @@ async def get_all_progress():
                 progress_points = (completed * 100) + (in_progress * 50)
                 curriculum_completion_rate = round(progress_points / total, 1) if total > 0 else 0.0
                 
-                # #region agent log
-                with open('/Users/alan/GitHub/onboarding/.cursor/debug.log', 'a') as f:
-                    f.write(json.dumps({"sessionId":session_id,"runId":"run1","hypothesisId":"B","location":"onboarding.py:535","message":"curriculum progress calculated","data":{"session_id":session_id,"total":total,"completed":completed,"in_progress":in_progress,"curriculum_completion_rate":curriculum_completion_rate,"old_completion_rate":summary.get("completionRate")},"timestamp":int(__import__('time').time()*1000)}) + '\n')
-                # #endregion
-                
                 # 커리큘럼 진행률로 업데이트
                 summary["completedCount"] = completed
                 summary["totalScenarios"] = total
                 summary["completionRate"] = curriculum_completion_rate
             except Exception as e:
-                # #region agent log
-                with open('/Users/alan/GitHub/onboarding/.cursor/debug.log', 'a') as f:
-                    f.write(json.dumps({"sessionId":session_id,"runId":"run1","hypothesisId":"C","location":"onboarding.py:545","message":"curriculum progress lookup failed","data":{"session_id":session_id,"error":str(e)},"timestamp":int(__import__('time').time()*1000)}) + '\n')
-                # #endregion
                 logger.warning(f"Failed to get curriculum progress for session {session_id}: {e}")
                 # 실패 시 기존 시나리오 기반 진행률 유지
         
-        # #region agent log
-        with open('/Users/alan/GitHub/onboarding/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"onboarding.py:551","message":"get_all_progress exit","data":{"final_summary_count":len(summaries),"sample_final":summaries[0] if summaries else None},"timestamp":int(__import__('time').time()*1000)}) + '\n')
-        # #endregion
-        
         return {"sessions": summaries}
     except Exception as e:
-        # #region agent log
-        import json
-        with open('/Users/alan/GitHub/onboarding/.cursor/debug.log', 'a') as f:
-            f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"onboarding.py:556","message":"get_all_progress error","data":{"error":str(e)},"timestamp":int(__import__('time').time()*1000)}) + '\n')
-        # #endregion
         logger.error(f"Failed to get all progress: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
