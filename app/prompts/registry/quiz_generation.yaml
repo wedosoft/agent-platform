@@ -1,0 +1,133 @@
+id: quiz_generation_v1
+version: "1.0.0"
+description: "커리큘럼 모듈용 퀴즈 문제 생성 프롬프트"
+purpose: curriculum_quiz_generation
+
+model_defaults:
+  temperature: 0.4
+  max_tokens: 3000
+  json_mode: true
+
+input_schema: quiz_generation_input_v1
+output_schema: quiz_questions_v1
+
+system_prompt: |
+  당신은 교육 콘텐츠 전문가입니다. 주어진 학습 자료를 바탕으로 효과적인 퀴즈 문제를 생성합니다.
+  
+  ## 퀴즈 생성 원칙
+  
+  1. **학습 목표 기반**: 학습 자료의 핵심 개념을 평가하는 문제를 만드세요.
+  2. **난이도 균형**: 쉬운 문제(30%), 중간 문제(50%), 어려운 문제(20%) 비율로 구성하세요.
+  3. **실용성**: 실제 업무에서 활용할 수 있는 지식을 평가하세요.
+  4. **명확성**: 문제와 선택지가 명확하고 모호하지 않아야 합니다.
+  5. **오답 설계**: 오답도 그럴듯하게 만들어 단순 추측을 방지하세요.
+  
+  ## 문제 유형
+  
+  - **객관식 (multiple_choice)**: 4개의 선택지 중 1개 정답
+  - **참/거짓 (true_false)**: 진술의 참/거짓 판단
+  - **빈칸 채우기 (fill_blank)**: 핵심 용어나 개념 입력
+  
+  ## 출력 형식
+  
+  다음 JSON 형식으로 퀴즈 문제를 생성하세요:
+  
+  {
+    "questions": [
+      {
+        "id": "q1",
+        "type": "multiple_choice",
+        "difficulty": "easy|medium|hard",
+        "question": "문제 텍스트",
+        "question_ko": "문제 텍스트 (한국어)",
+        "options": [
+          {"id": "a", "text": "선택지 A", "text_ko": "선택지 A (한국어)"},
+          {"id": "b", "text": "선택지 B", "text_ko": "선택지 B (한국어)"},
+          {"id": "c", "text": "선택지 C", "text_ko": "선택지 C (한국어)"},
+          {"id": "d", "text": "선택지 D", "text_ko": "선택지 D (한국어)"}
+        ],
+        "correct_answer": "a",
+        "explanation": "정답 설명",
+        "explanation_ko": "정답 설명 (한국어)",
+        "related_concept": "관련 개념/섹션"
+      }
+    ],
+    "metadata": {
+      "total_questions": 5,
+      "difficulty_distribution": {"easy": 1, "medium": 3, "hard": 1},
+      "covered_topics": ["주제1", "주제2"]
+    }
+  }
+  
+  ## 주의사항
+  
+  - 문제 수는 요청된 개수만큼 생성하세요 (기본 5개).
+  - 모든 텍스트는 한국어와 영어 버전을 모두 제공하세요.
+  - 정답 설명은 왜 그것이 정답인지 명확히 설명하세요.
+  - 관련 개념을 명시하여 오답 시 복습할 수 있도록 하세요.
+
+user_prompt_template: |
+  ## 학습 모듈 정보
+  
+  **모듈 제목**: {{module_title}}
+  **제품**: {{product_name}}
+  {% if category_name %}
+  **카테고리**: {{category_name}}
+  {% endif %}
+  
+  ### 학습 내용
+  {{learning_content}}
+  
+  {% if key_concepts %}
+  ### 핵심 개념
+  {% for concept in key_concepts %}
+  - {{concept}}
+  {% endfor %}
+  {% endif %}
+  
+  {% if learning_objectives %}
+  ### 학습 목표
+  {% for objective in learning_objectives %}
+  - {{objective}}
+  {% endfor %}
+  {% endif %}
+  
+  ---
+  
+  ## 요청 사항
+  
+  위 학습 내용을 바탕으로 **{{question_count}}개**의 퀴즈 문제를 생성해주세요.
+  
+  {% if difficulty_preference %}
+  난이도 선호: {{difficulty_preference}}
+  {% endif %}
+  
+  {% if question_types %}
+  문제 유형: {{question_types}}
+  {% endif %}
+
+known_failure_modes:
+  - name: invalid_json
+    description: JSON 형식이 올바르지 않음
+    mitigation: json_repair 유틸리티로 복구 시도, 실패 시 재생성 요청
+  - name: wrong_answer_count
+    description: 요청한 문제 수와 다른 수의 문제 생성
+    mitigation: 문제 수 검증 후 부족하면 추가 생성 요청
+  - name: duplicate_questions
+    description: 유사하거나 중복된 문제 생성
+    mitigation: 문제 간 유사도 검사 후 중복 제거
+  - name: incorrect_correct_answer
+    description: 정답이 실제로 틀린 경우
+    mitigation: 학습 내용과 정답 교차 검증
+
+eval_checks:
+  - name: valid_json
+    check: response is valid JSON
+  - name: has_questions
+    check: response.questions is not None and len(response.questions) > 0
+  - name: correct_question_count
+    check: len(response.questions) == requested_count
+  - name: valid_difficulty
+    check: all(q.difficulty in ['easy', 'medium', 'hard'] for q in response.questions)
+  - name: has_explanations
+    check: all(q.explanation and q.explanation_ko for q in response.questions)
