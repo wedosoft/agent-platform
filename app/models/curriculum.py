@@ -178,6 +178,7 @@ class UpdateProgressRequest(BaseModel):
     session_id: str = Field(..., alias="sessionId")
     status: Optional[str] = None  # learning, completed
     learning_completed: bool = Field(False, alias="learningCompleted")
+    force: bool = Field(False, description="완료된 상태도 덮어쓰기 허용 (재시작 시 사용)")
 
     class Config:
         populate_by_name = True

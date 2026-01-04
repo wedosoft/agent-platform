@@ -761,22 +761,43 @@ async def get_progress_summary(
     - 전체 완료율
     """
     try:
+        # #region agent log
+        import json
+        with open('/Users/alan/GitHub/onboarding/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":session_id,"runId":"run1","hypothesisId":"D","location":"curriculum.py:763","message":"get_progress_summary entry","data":{"session_id":session_id,"product":product},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        # #endregion
+        
         repo = get_curriculum_repository()
         modules = await repo.get_modules_with_progress(
             session_id=session_id,
             product=product,
         )
         
+        # #region agent log
+        with open('/Users/alan/GitHub/onboarding/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":session_id,"runId":"run1","hypothesisId":"D","location":"curriculum.py:770","message":"get_modules_with_progress result","data":{"session_id":session_id,"product":product,"module_count":len(modules),"module_statuses":[{"id":str(m.id),"status":m.status} for m in modules[:5]]},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        # #endregion
+        
         total = len(modules)
         completed = sum(1 for m in modules if m.status == "completed")
         in_progress = sum(1 for m in modules if m.status == "learning")
+        
+        # 진행률 계산: 완료된 모듈은 100%, 진행 중인 모듈은 50%로 반영
+        # 예: 완료 2개, 진행 중 1개, 전체 10개 = (2*100% + 1*50%) / 10 = 25%
+        progress_points = (completed * 100) + (in_progress * 50)
+        completion_rate = round(progress_points / total, 1) if total > 0 else 0.0
+        
+        # #region agent log
+        with open('/Users/alan/GitHub/onboarding/.cursor/debug.log', 'a') as f:
+            f.write(json.dumps({"sessionId":session_id,"runId":"run1","hypothesisId":"D","location":"curriculum.py:782","message":"get_progress_summary result","data":{"session_id":session_id,"product":product,"total":total,"completed":completed,"in_progress":in_progress,"completion_rate":completion_rate},"timestamp":int(__import__('time').time()*1000)}) + '\n')
+        # #endregion
         
         return ProgressSummary(
             sessionId=session_id,
             totalModules=total,
             completedModules=completed,
             inProgressModules=in_progress,
-            completionRate=round(completed / total * 100, 1) if total > 0 else 0,
+            completionRate=completion_rate,
             modules=modules,
         )
     except CurriculumRepositoryError as e:
@@ -834,6 +855,7 @@ async def update_module_progress(
             module_id=module_id,
             status=request.status,
             learning_completed=request.learning_completed,
+            force=request.force,
         )
         
         if not progress:

@@ -93,29 +93,137 @@ class OnboardingRepository:
             return None
 
     async def get_session_by_user_name(self, user_name: str) -> Optional[OnboardingSession]:
-        """사용자 이름으로 최신 세션 조회 (가장 최근 생성된 세션)."""
+        """사용자 이름으로 세션 조회 (중복 세션이 있으면 통합 후 반환)."""
         try:
+            # 정규화된 이름으로 조회 (대소문자 구분 없이)
+            normalized_name = user_name.strip()
+            
             response = (
                 self.client.table(TABLE_SESSIONS)
                 .select("*")
-                .eq("user_name", user_name)
+                .ilike("user_name", normalized_name)
                 .order("created_at", desc=True)
-                .limit(1)
                 .execute()
             )
-            if response.data:
-                row = response.data[0]
-                return OnboardingSession(
-                    id=row.get("id"),
-                    sessionId=row["session_id"],
-                    userName=row["user_name"],
-                    createdAt=row.get("created_at"),
-                    updatedAt=row.get("updated_at"),
-                )
-            return None
+            
+            if not response.data:
+                return None
+            
+            # 중복 세션이 있으면 첫 번째(가장 최근) 세션으로 통합
+            if len(response.data) > 1:
+                LOGGER.warning(f"Found {len(response.data)} duplicate sessions for user '{normalized_name}', consolidating...")
+                await self._consolidate_sessions(response.data)
+            
+            row = response.data[0]
+            return OnboardingSession(
+                id=row.get("id"),
+                sessionId=row["session_id"],
+                userName=row["user_name"],
+                createdAt=row.get("created_at"),
+                updatedAt=row.get("updated_at"),
+            )
         except Exception as e:
             LOGGER.error(f"Failed to get session by user_name: {e}")
             return None
+
+    async def _consolidate_sessions(self, sessions: List[Dict[str, Any]]) -> None:
+        """중복 세션을 첫 번째 세션으로 통합 (시나리오 진행률 + 커리큘럼 모듈 진행률 포함)."""
+        if len(sessions) <= 1:
+            return
+        
+        primary_session = sessions[0]
+        primary_session_id = primary_session["session_id"]
+        duplicate_session_ids = [s["session_id"] for s in sessions[1:]]
+        
+        LOGGER.info(f"Consolidating sessions: keeping {primary_session_id}, merging from {duplicate_session_ids}")
+        
+        try:
+            for dup_session_id in duplicate_session_ids:
+                # 1. 시나리오 진행률 통합 (onboarding_progress)
+                dup_progress = (
+                    self.client.table(TABLE_PROGRESS)
+                    .select("*")
+                    .eq("session_id", dup_session_id)
+                    .execute()
+                )
+                
+                for row in dup_progress.data or []:
+                    scenario_id = row["scenario_id"]
+                    existing = (
+                        self.client.table(TABLE_PROGRESS)
+                        .select("id")
+                        .eq("session_id", primary_session_id)
+                        .eq("scenario_id", scenario_id)
+                        .execute()
+                    )
+                    if not existing.data:
+                        self.client.table(TABLE_PROGRESS).update(
+                            {"session_id": primary_session_id}
+                        ).eq("id", row["id"]).execute()
+                        LOGGER.debug(f"Moved scenario progress {scenario_id} to {primary_session_id}")
+                    else:
+                        self.client.table(TABLE_PROGRESS).delete().eq("id", row["id"]).execute()
+                
+                # 2. 커리큘럼 모듈 진행률 통합 (module_progress - onboarding 스키마)
+                try:
+                    # onboarding 스키마의 module_progress 테이블 접근
+                    dup_module_progress = (
+                        self.client.table("module_progress")
+                        .select("*")
+                        .eq("session_id", dup_session_id)
+                        .execute()
+                    )
+                    
+                    for row in dup_module_progress.data or []:
+                        module_id = row["module_id"]
+                        existing = (
+                            self.client.table("module_progress")
+                            .select("id")
+                            .eq("session_id", primary_session_id)
+                            .eq("module_id", module_id)
+                            .execute()
+                        )
+                        if not existing.data:
+                            # 진행률 이동
+                            self.client.table("module_progress").update(
+                                {"session_id": primary_session_id}
+                            ).eq("id", row["id"]).execute()
+                            LOGGER.debug(f"Moved module progress {module_id} to {primary_session_id}")
+                        else:
+                            # 기존 진행률이 있으면 더 높은 상태 유지 (completed > learning > not_started)
+                            existing_row = (
+                                self.client.table("module_progress")
+                                .select("*")
+                                .eq("session_id", primary_session_id)
+                                .eq("module_id", module_id)
+                                .execute()
+                            )
+                            if existing_row.data:
+                                existing_status = existing_row.data[0].get("status", "not_started")
+                                dup_status = row.get("status", "not_started")
+                                status_priority = {"not_started": 0, "learning": 1, "completed": 2}
+                                
+                                if status_priority.get(dup_status, 0) > status_priority.get(existing_status, 0):
+                                    # 중복 세션의 진행률이 더 높으면 업데이트
+                                    self.client.table("module_progress").update({
+                                        "status": dup_status,
+                                        "quiz_score": row.get("quiz_score"),
+                                        "quiz_passed_at": row.get("quiz_passed_at"),
+                                        "learning_completed_at": row.get("learning_completed_at"),
+                                    }).eq("id", existing_row.data[0]["id"]).execute()
+                                    LOGGER.debug(f"Updated module progress {module_id} to {dup_status}")
+                            
+                            # 중복 진행률 삭제
+                            self.client.table("module_progress").delete().eq("id", row["id"]).execute()
+                except Exception as module_err:
+                    LOGGER.warning(f"Failed to consolidate module progress: {module_err}")
+                
+                # 3. 중복 세션 삭제
+                self.client.table(TABLE_SESSIONS).delete().eq("session_id", dup_session_id).execute()
+                LOGGER.info(f"Deleted duplicate session: {dup_session_id}")
+                
+        except Exception as e:
+            LOGGER.error(f"Failed to consolidate sessions: {e}")
 
     async def get_or_create_session(self, session_id: str, user_name: str) -> OnboardingSession:
         """세션 조회 또는 생성."""
@@ -218,7 +326,7 @@ class OnboardingRepository:
     # ============================================
 
     async def get_all_sessions_summary(self) -> List[Dict[str, Any]]:
-        """모든 세션의 진행도 요약 (관리자용)."""
+        """모든 사용자의 진행도 요약 (관리자용) - 사용자 단위로 통합."""
         try:
             # 모든 세션 조회
             sessions_response = (
@@ -228,15 +336,30 @@ class OnboardingRepository:
                 .execute()
             )
 
-            summaries = []
+            # 사용자별로 세션 그룹화 (중복 세션 자동 통합)
+            user_sessions: Dict[str, List[Dict[str, Any]]] = {}
             for session_row in (sessions_response.data or []):
-                session_id = session_row["session_id"]
+                user_name = session_row["user_name"].strip().lower()  # 정규화
+                if user_name not in user_sessions:
+                    user_sessions[user_name] = []
+                user_sessions[user_name].append(session_row)
+            
+            summaries = []
+            for user_name, sessions in user_sessions.items():
+                # 중복 세션이 있으면 통합
+                if len(sessions) > 1:
+                    LOGGER.info(f"Found {len(sessions)} sessions for user '{user_name}', consolidating...")
+                    await self._consolidate_sessions(sessions)
+                    # 통합 후 첫 번째 세션 사용
+                
+                primary_session = sessions[0]
+                session_id = primary_session["session_id"]
                 progress_list = await self.get_progress(session_id)
 
                 summaries.append({
                     "sessionId": session_id,
-                    "userName": session_row["user_name"],
-                    "createdAt": session_row["created_at"],
+                    "userName": primary_session["user_name"],  # 원본 이름 유지
+                    "createdAt": primary_session["created_at"],
                     "completedCount": len(progress_list),
                     "totalScenarios": 12,
                     "completionRate": round(len(progress_list) / 12 * 100, 1),

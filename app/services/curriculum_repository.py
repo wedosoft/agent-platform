@@ -451,14 +451,25 @@ class CurriculumRepository:
                 .execute()
             )
             
+            LOGGER.debug(f"get_all_progress: session_id={session_id}, found {len(response.data or [])} records")
+            
             progress_map = {}
             for row in response.data or []:
-                module_id = row["module_id"]
+                # module_id를 문자열로 변환하여 키로 사용 (UUID 타입일 수 있음)
+                # UUID를 소문자로 정규화하여 일관성 유지
+                module_id_raw = row["module_id"]
+                module_id = str(module_id_raw).lower() if module_id_raw else None
+                
+                if not module_id:
+                    LOGGER.warning(f"get_all_progress: skipping row with null module_id")
+                    continue
+                status = row.get("status", "not_started")
+                LOGGER.debug(f"get_all_progress: module_id={module_id}, status={status}")
                 progress_map[module_id] = ModuleProgress(
                     id=row.get("id"),
                     sessionId=row["session_id"],
                     moduleId=row["module_id"],
-                    status=row.get("status", "not_started"),
+                    status=status,
                     learningStartedAt=row.get("learning_started_at"),
                     learningCompletedAt=row.get("learning_completed_at"),
                     quizScore=row.get("quiz_score"),
@@ -466,9 +477,10 @@ class CurriculumRepository:
                     totalTimeSeconds=row.get("total_time_seconds", 0),  # DB: total_time_seconds
                     completedAt=row.get("completed_at"),
                 )
+            LOGGER.debug(f"get_all_progress: returning {len(progress_map)} progress records")
             return progress_map
         except Exception as e:
-            LOGGER.error(f"Failed to get all module progress: {e}")
+            LOGGER.error(f"Failed to get all module progress: {e}", exc_info=True)
             return {}
 
     async def update_progress(
@@ -477,8 +489,14 @@ class CurriculumRepository:
         module_id: UUID,
         status: Optional[str] = None,
         learning_completed: bool = False,
+        force: bool = False,
     ) -> Optional[ModuleProgress]:
-        """모듈 진도 업데이트."""
+        """
+        모듈 진도 업데이트.
+        
+        Args:
+            force: True이면 완료된 상태도 덮어쓰기 허용 (재시작 시 사용)
+        """
         try:
             now = datetime.now(timezone.utc).isoformat()
             
@@ -486,6 +504,23 @@ class CurriculumRepository:
             progress = await self.get_progress(session_id, module_id)
             
             if progress:
+                # 완료된 상태를 보호 (force가 True일 때만 덮어쓰기 허용)
+                if progress.status == "completed" and not force:
+                    # 완료된 상태에서는 status를 변경하지 않음
+                    # 단, learning_completed 플래그가 True이고 아직 완료 시간이 없으면 업데이트
+                    if learning_completed and not progress.learning_completed_at:
+                        update_data = {
+                            "updated_at": now,
+                            "learning_completed_at": now,
+                        }
+                        self.client.table(TABLE_PROGRESS).update(update_data).eq(
+                            "session_id", session_id
+                        ).eq(
+                            "module_id", str(module_id)
+                        ).execute()
+                    # 완료된 상태에서는 조회만 하고 업데이트하지 않음
+                    return await self.get_progress(session_id, module_id)
+                
                 # 업데이트
                 update_data = {"updated_at": now}
                 
@@ -547,16 +582,39 @@ class CurriculumRepository:
             # 모듈 목록
             modules = await self.get_modules(product=product)
             
-            # 진도 조회
-            progress_map = await self.get_all_progress(session_id)
+            LOGGER.debug(f"get_modules_with_progress: session_id={session_id}, product={product}, found {len(modules)} modules")
+            
+            # 현재 제품의 모듈 ID 집합 생성 (소문자로 정규화)
+            product_module_ids = {str(m.id).lower() for m in modules}
+            
+            # 진도 조회 (모든 진행 상태 가져오기)
+            all_progress_map = await self.get_all_progress(session_id)
+            
+            # 현재 제품의 모듈에 해당하는 진행 상태만 필터링
+            progress_map = {
+                module_id: progress 
+                for module_id, progress in all_progress_map.items()
+                if module_id in product_module_ids
+            }
+            
+            LOGGER.debug(f"get_modules_with_progress: progress_map has {len(progress_map)} entries (filtered from {len(all_progress_map)} total)")
             
             result = []
+            completed_count = 0
             for module in modules:
-                module_id_str = str(module.id)
+                # UUID를 소문자로 정규화하여 progress_map과 일치시킴
+                module_id_str = str(module.id).lower()
                 progress = progress_map.get(module_id_str)
+                
+                if not progress:
+                    LOGGER.debug(f"get_modules_with_progress: no progress found for module_id={module_id_str}")
                 
                 # total_time_seconds -> learningTimeMinutes (seconds를 minutes로 변환)
                 learning_minutes = (progress.total_time_seconds // 60) if progress else 0
+                
+                status = progress.status if progress else "not_started"
+                if status == "completed":
+                    completed_count += 1
                 
                 result.append(CurriculumModuleResponse(
                     id=module.id,
@@ -569,15 +627,16 @@ class CurriculumRepository:
                     icon=module.icon,
                     estimatedMinutes=module.estimated_minutes,
                     displayOrder=module.display_order,
-                    status=progress.status if progress else "not_started",
+                    status=status,
                     quizScore=progress.quiz_score if progress else None,
                     quizAttempts=progress.quiz_attempts if progress else 0,
                     learningTimeMinutes=learning_minutes,
                 ))
             
+            LOGGER.debug(f"get_modules_with_progress: returning {len(result)} modules, {completed_count} completed")
             return result
         except Exception as e:
-            LOGGER.error(f"Failed to get modules with progress: {e}")
+            LOGGER.error(f"Failed to get modules with progress: {e}", exc_info=True)
             raise CurriculumRepositoryError(str(e)) from e
 
     # ============================================
