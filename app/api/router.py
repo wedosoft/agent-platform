@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     admin,
+    admin_cms,
     agents,
     assist,
     chat,
@@ -40,6 +41,7 @@ def get_api_router() -> APIRouter:
     router.include_router(channel_web_v1.router)
     router.include_router(assist.router)  # FDK Custom App assist API
     router.include_router(admin.router)  # Admin API for tenant management
+    router.include_router(admin_cms.router)  # Admin CMS API for onboarding management
     router.include_router(sync.router, prefix="/sync")  # Sync API for data synchronization
     router.include_router(onboarding.router)  # Onboarding API
     router.include_router(curriculum.router)  # Curriculum API for product training
