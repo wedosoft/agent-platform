@@ -92,6 +92,42 @@ run_python_check() {
     return 0
 }
 
+# Run pytest
+run_pytest_check() {
+    echo "🧪 pytest 실행 중..." >&2
+
+    local pytest_cmd=""
+
+    # venv 내부 pytest 우선 탐색
+    for venv_dir in "$CLAUDE_PROJECT_DIR/.venv" "$CLAUDE_PROJECT_DIR/venv"; do
+        if [ -x "$venv_dir/bin/pytest" ]; then
+            pytest_cmd="$venv_dir/bin/pytest"
+            break
+        fi
+    done
+
+    # 시스템 PATH fallback
+    if [ -z "$pytest_cmd" ] && command -v pytest &> /dev/null; then
+        pytest_cmd="pytest"
+    fi
+
+    if [ -z "$pytest_cmd" ]; then
+        echo "  ⚠️ pytest 미설치 - 건너뜀" >&2
+        return 0
+    fi
+
+    local errors
+    errors=$("$pytest_cmd" "$CLAUDE_PROJECT_DIR/tests/" -x -q --tb=short 2>&1)
+    if [ $? -ne 0 ]; then
+        echo "$errors" > "$CACHE_DIR/pytest-errors.txt"
+        echo "  ❌ pytest 실패" >&2
+        return 1
+    fi
+
+    echo "  ✅ pytest OK" >&2
+    return 0
+}
+
 # Run TypeScript check
 run_typescript_check() {
     echo "📘 TypeScript 검사 중..." >&2
@@ -138,6 +174,7 @@ for ptype in $PROJECT_TYPES; do
     case "$ptype" in
         python)
             run_python_check || TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
+            run_pytest_check || TOTAL_ERRORS=$((TOTAL_ERRORS + 1))
             ;;
         typescript)
             run_typescript_check || TOTAL_ERRORS=$((TOTAL_ERRORS + 1))

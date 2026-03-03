@@ -31,6 +31,26 @@
             "enabled": false,
             "description": "Next.js specific patterns",
             "skills": ["nextjs-guidelines"]
+        },
+        "quality": {
+            "enabled": true,
+            "description": "Universal code quality standards and best practices",
+            "skills": ["coding-standards"]
+        },
+        "security": {
+            "enabled": true,
+            "description": "Security review, vulnerability prevention, and secure coding patterns",
+            "skills": ["security-review"]
+        },
+        "testing": {
+            "enabled": true,
+            "description": "Test-driven development workflow and pytest patterns",
+            "skills": ["tdd-workflow"]
+        },
+        "backend": {
+            "enabled": true,
+            "description": "Backend architecture patterns: repository, service layer, caching, API design",
+            "skills": ["backend-patterns"]
         }
     },
     "skills": {
@@ -280,6 +300,157 @@
                     "export default function.*Page",
                     "export default function.*Layout",
                     "from 'next"
+                ]
+            }
+        },
+        "coding-standards": {
+            "module": "quality",
+            "type": "guardrail",
+            "enforcement": "suggest",
+            "priority": "high",
+            "description": "Universal coding standards: naming, immutability, error handling, DRY/KISS/YAGNI",
+            "skillPath": "quality/coding-standards",
+            "promptTriggers": {
+                "keywords": [
+                    "code quality",
+                    "naming convention",
+                    "immutability",
+                    "dry principle",
+                    "code smell",
+                    "magic number",
+                    "deep nesting",
+                    "early return"
+                ],
+                "intentPatterns": [
+                    "(improve|review|check).*?(code quality|naming|style)",
+                    "(how to|best practice).*?(naming|function|variable|error handling)",
+                    "code.*?(smell|standard|convention)"
+                ]
+            }
+        },
+        "security-review": {
+            "module": "security",
+            "type": "guardrail",
+            "enforcement": "suggest",
+            "priority": "critical",
+            "description": "Security checklist: secrets, input validation, SQL injection, auth, rate limiting",
+            "skillPath": "security/security-review",
+            "promptTriggers": {
+                "keywords": [
+                    "security",
+                    "api key",
+                    "secret",
+                    "password",
+                    "token",
+                    "authentication",
+                    "authorization",
+                    "injection",
+                    "xss",
+                    "csrf",
+                    "vulnerability",
+                    "env variable",
+                    "rate limit"
+                ],
+                "intentPatterns": [
+                    "(add|implement|review|check).*?(auth|security|api.*?key|secret|token)",
+                    "(security|vulnerability).*?(review|audit|check|scan)",
+                    "(protect|prevent|secure).*?(injection|xss|csrf|attack)"
+                ]
+            },
+            "fileTriggers": {
+                "pathPatterns": [
+                    "app/api/**/*.py",
+                    "app/middleware/**/*.py",
+                    "app/core/**/*.py"
+                ],
+                "contentPatterns": [
+                    "api_key",
+                    "password",
+                    "secret",
+                    "token",
+                    "APIRouter",
+                    "Depends"
+                ]
+            }
+        },
+        "tdd-workflow": {
+            "module": "testing",
+            "type": "guardrail",
+            "enforcement": "suggest",
+            "priority": "high",
+            "description": "TDD workflow: write tests first, 80% coverage, pytest patterns for FastAPI",
+            "skillPath": "testing/tdd-workflow",
+            "promptTriggers": {
+                "keywords": [
+                    "test",
+                    "tdd",
+                    "unit test",
+                    "integration test",
+                    "pytest",
+                    "coverage",
+                    "mock",
+                    "fixture",
+                    "conftest"
+                ],
+                "intentPatterns": [
+                    "(write|create|add).*?(test|spec|fixture)",
+                    "(tdd|test.*?driven|red.*?green)",
+                    "(how to|best practice).*?(test|pytest|mock)"
+                ]
+            },
+            "fileTriggers": {
+                "pathPatterns": [
+                    "tests/**/*.py",
+                    "**/test_*.py",
+                    "**/*_test.py",
+                    "**/conftest.py"
+                ],
+                "contentPatterns": [
+                    "import pytest",
+                    "@pytest.fixture",
+                    "def test_",
+                    "pytest.mark",
+                    "AsyncClient"
+                ]
+            }
+        },
+        "backend-patterns": {
+            "module": "backend",
+            "type": "domain",
+            "enforcement": "suggest",
+            "priority": "high",
+            "description": "Backend patterns: repository, service layer, dependency injection, caching, API design",
+            "skillPath": "backend/backend-patterns",
+            "promptTriggers": {
+                "keywords": [
+                    "repository pattern",
+                    "service layer",
+                    "dependency injection",
+                    "caching",
+                    "api design",
+                    "middleware",
+                    "background task",
+                    "pagination",
+                    "supabase query"
+                ],
+                "intentPatterns": [
+                    "(implement|design|create).*?(repository|service|middleware|api)",
+                    "(how to|best practice).*?(service layer|caching|dependency|api design)",
+                    "(refactor|restructure).*?(backend|service|repository)"
+                ]
+            },
+            "fileTriggers": {
+                "pathPatterns": [
+                    "app/services/**/*.py",
+                    "app/repositories/**/*.py",
+                    "app/api/routes/**/*.py"
+                ],
+                "contentPatterns": [
+                    "class.*Service",
+                    "class.*Repository",
+                    "async def",
+                    "Depends",
+                    "BackgroundTasks"
                 ]
             }
         },
