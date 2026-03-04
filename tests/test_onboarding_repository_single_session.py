@@ -58,6 +58,6 @@ async def test_get_session_by_user_name_returns_session_when_single_record():
 
     # Assert: should NOT be None
     assert session is not None
-    assert session.sessionId == "sess_1"
+    assert session.session_id == "sess_1"
 
 
