@@ -133,7 +133,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
-# CORS 설정 수정: FDK 로컬 개발 환경 및 ngrok 지원
+# CORS 설정: FDK/로컬 개발 + 홈페이지(www.wedosoft.net) 및 개발 편의용 regex
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -142,8 +142,10 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:5173",   # Vite 프론트엔드(온보딩)
+        "https://www.wedosoft.net",  # 홈페이지 프로덕션
+        "https://wedosoft.net",
     ],
-    allow_origin_regex="https?://.*",  # 모든 Origin 허용 (개발 편의성)
+    allow_origin_regex="https?://.*",  # 그 외 Origin (개발/ngrok 등)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
