@@ -242,6 +242,124 @@ class TicketAnalysisOrchestrator:
                 error=error_msg,
             )
 
+    # Field emit order: most important to user first
+    _STREAM_FIELD_ORDER = [
+        "narrative", "confidence", "root_cause", "resolution",
+        "intent", "sentiment", "risk_tags", "field_proposals",
+        "escalation_history", "current_status", "evidence",
+    ]
+
+    async def run_ticket_analysis_stream(
+        self,
+        normalized_input: Dict[str, Any],
+        options: AnalysisOptions,
+        tenant_id: str,
+    ):
+        """
+        Async generator: run full analysis pipeline, then yield results field by field.
+
+        Yields dicts:
+            {"type": "progress", "step": "analyzing", "analysis_id": str}
+            {"type": "field", "name": str, "data": Any}
+            {"type": "complete", "analysis_id": str, "gate": str, "meta": dict}
+            {"type": "error", "message": str}
+        """
+        analysis_id = str(uuid.uuid4())
+        ticket_id = normalized_input.get("ticket_id", "unknown")
+        t0 = time.perf_counter()
+
+        await self.persistence.save_analysis_run(
+            analysis_id=analysis_id,
+            tenant_id=tenant_id,
+            ticket_id=ticket_id,
+            status="running",
+        )
+
+        yield {"type": "progress", "step": "analyzing", "analysis_id": analysis_id}
+
+        try:
+            prompt_spec = get_prompt(self.PROMPT_ID)
+            context = self._build_prompt_context(normalized_input, options)
+            system_prompt, user_prompt = prompt_spec.render(context)
+
+            llm_request = LLMRequest(
+                purpose="analyze_ticket_cot",
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=prompt_spec.temperature,
+                json_mode=prompt_spec.json_mode,
+            )
+            llm_response: LLMResponse = await self.llm_gateway.generate(llm_request)
+
+            analysis, parse_error = try_parse_json(llm_response.content)
+            if analysis is None:
+                raise ValueError(f"Failed to parse LLM response: {parse_error}")
+
+            analysis, violations = apply_guardrails(analysis)
+            if violations:
+                logger.warning("[orchestrator/stream] Guardrail violations: %s", violations)
+
+            confidence = analysis.get("confidence", 0.0)
+            gate = self._compute_gate(confidence, options.confidence_threshold)
+
+            if options.selected_fields:
+                analysis["field_proposals"] = [
+                    p for p in analysis.get("field_proposals", [])
+                    if p.get("field_name") in options.selected_fields
+                ]
+
+            # Emit each field in priority order
+            for field in self._STREAM_FIELD_ORDER:
+                if field in analysis:
+                    yield {"type": "field", "name": field, "data": analysis[field]}
+
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            meta = {
+                "llm_provider": llm_response.provider,
+                "llm_model": llm_response.model,
+                "prompt_version": self.PROMPT_ID,
+                "latency_ms": latency_ms,
+                "token_usage": {"input": 0, "output": 0},
+                "retrieval_count": len(context.get("similar_cases", [])) + len(context.get("kb_articles", [])),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "used_fallback": llm_response.used_fallback,
+                "attempts": llm_response.attempts,
+            }
+
+            await self.persistence.save_analysis_run(
+                analysis_id=analysis_id,
+                tenant_id=tenant_id,
+                ticket_id=ticket_id,
+                status="completed",
+                gate=gate,
+                meta=meta,
+            )
+            await self.persistence.save_analysis_result(
+                analysis_id=analysis_id,
+                tenant_id=tenant_id,
+                ticket_id=ticket_id,
+                analysis=analysis,
+            )
+
+            logger.info(
+                f"[orchestrator/stream] Success: analysis_id={analysis_id} "
+                f"gate={gate} confidence={confidence:.2f} latency_ms={latency_ms}"
+            )
+            yield {"type": "complete", "analysis_id": analysis_id, "gate": gate, "meta": meta}
+
+        except Exception as e:
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            logger.error(f"[orchestrator/stream] Failed: {e}", exc_info=True)
+            await self.persistence.save_analysis_run(
+                analysis_id=analysis_id,
+                tenant_id=tenant_id,
+                ticket_id=ticket_id,
+                status="failed",
+                meta={"latency_ms": latency_ms},
+                error_message=str(e),
+            )
+            yield {"type": "error", "message": str(e)}
+
     def _build_prompt_context(
         self,
         normalized_input: Dict[str, Any],

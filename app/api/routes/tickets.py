@@ -9,10 +9,12 @@ chat-based approach with schema-validated JSON input/output.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.services.orchestrator import (
@@ -215,6 +217,58 @@ async def analyze_ticket(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error_code": "ANALYSIS_FAILED", "message": str(e)},
         )
+
+
+@router.post("/{ticket_id}/analyze/stream")
+async def analyze_ticket_stream(
+    ticket_id: str,
+    request: TicketAnalyzeRequest,
+    x_tenant_id: str = Header(..., alias="X-Tenant-ID"),
+    x_freshdesk_domain: Optional[str] = Header(None, alias="X-Freshdesk-Domain"),
+    x_freshdesk_api_key: Optional[str] = Header(None, alias="X-Freshdesk-API-Key"),
+) -> StreamingResponse:
+    """
+    SSE streaming version of ticket analysis.
+
+    Yields events:
+      {"type": "progress", "step": "analyzing", "analysis_id": "..."}
+      {"type": "field", "name": "<field>", "data": <value>}  (one per analysis field)
+      {"type": "complete", "analysis_id": "...", "gate": "...", "meta": {...}}
+      {"type": "error", "message": "..."}
+    """
+    logger.info(f"[tickets.analyze/stream] ticket_id={ticket_id}, tenant_id={x_tenant_id}")
+
+    request_dict = request.model_dump(exclude_none=True, by_alias=False, exclude={"options"})
+    normalized_input = {"ticket_id": ticket_id, **request_dict}
+    req_options = request.options or AnalyzeOptions()
+    validate_or_raise("ticket_normalized_v1", normalized_input)
+
+    orchestrator_options = OrchestratorOptions(
+        skip_retrieval=req_options.skip_retrieval,
+        include_evidence=req_options.include_evidence,
+        confidence_threshold=req_options.confidence_threshold,
+        selected_fields=req_options.selected_fields,
+        response_tone=req_options.response_tone,
+    )
+
+    async def event_stream():
+        try:
+            orchestrator = get_ticket_analysis_orchestrator()
+            async for event in orchestrator.run_ticket_analysis_stream(
+                normalized_input=normalized_input,
+                options=orchestrator_options,
+                tenant_id=x_tenant_id,
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.error(f"[tickets.analyze/stream] Unexpected error: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/{ticket_id}/analyses")
