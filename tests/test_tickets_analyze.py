@@ -3,7 +3,7 @@ Tests for POST /api/tickets/{ticket_id}/analyze
 
 PR1 DoD:
 - (1) 샘플 호출 시 200 OK
-- (2) 응답이 ticket_analysis_v1 스키마 검증 통과
+- (2) 응답이 ticket_analysis 스키마 검증 통과
 - (3) 잘못된 입력 → 400 + INVALID_INPUT_SCHEMA
 - (4) 단위 테스트 최소 1개 포함
 """
@@ -83,7 +83,7 @@ class TestAnalyzeTicketEndpoint:
         assert data["status"] in ["completed", "failed", "partial"]
 
     def test_analyze_response_validates_against_schema(self, client):
-        """Response validates against ticket_analysis_v1 schema."""
+        """Response validates against ticket_analysis schema."""
         response = client.post(
             "/api/tickets/12345/analyze",
             json=VALID_TICKET_PAYLOAD,
@@ -94,8 +94,8 @@ class TestAnalyzeTicketEndpoint:
         data = response.json()
 
         # Validate against schema
-        is_valid = validate_output("ticket_analysis_v1", data)
-        assert is_valid, "Response should validate against ticket_analysis_v1 schema"
+        is_valid = validate_output("ticket_analysis", data)
+        assert is_valid, "Response should validate against ticket_analysis schema"
 
     def test_analyze_minimal_input(self, client):
         """Minimal input (just required fields) works."""
@@ -182,7 +182,7 @@ class TestAnalyzeTicketEndpoint:
         meta = data.get("meta", {})
 
         assert "prompt_version" in meta
-        assert meta["prompt_version"] == "ticket_analysis_cot_v1"
+        assert meta["prompt_version"] == "ticket_analysis_cot"
         assert "created_at" in meta
         assert "latency_ms" in meta
 
@@ -228,7 +228,11 @@ class TestSchemaValidation:
             "gate": "CONFIRM",
             "analysis": {
                 "narrative": {"summary": "Test summary"},
-                "confidence": 0.85
+                "confidence": 0.85,
+                "summary_sections": [
+                    {"title": "핵심 이슈", "content": "테스트 요약"},
+                    {"title": "현재 상태", "content": "테스트 상태"},
+                ]
             },
             "meta": {
                 "llm_provider": "test",
@@ -236,7 +240,7 @@ class TestSchemaValidation:
             }
         }
 
-        is_valid = validate_output("ticket_analysis_v1", valid_response)
+        is_valid = validate_output("ticket_analysis", valid_response)
         assert is_valid is True
 
     def test_validate_output_invalid_gate(self):
@@ -248,7 +252,7 @@ class TestSchemaValidation:
             "gate": "INVALID_GATE",  # Invalid enum value
         }
 
-        is_valid = validate_output("ticket_analysis_v1", invalid_response)
+        is_valid = validate_output("ticket_analysis", invalid_response)
         assert is_valid is False
 
     def test_validate_output_missing_required_field(self):
@@ -258,5 +262,112 @@ class TestSchemaValidation:
             # Missing: ticket_id, status, gate
         }
 
-        is_valid = validate_output("ticket_analysis_v1", incomplete_response)
+        is_valid = validate_output("ticket_analysis", incomplete_response)
         assert is_valid is False
+
+
+class TestSummarySectionsFallback:
+    """Tests for _ensure_summary_sections in the orchestrator."""
+
+    def setup_method(self):
+        from app.services.orchestrator.ticket_analysis_orchestrator import (
+            TicketAnalysisOrchestrator,
+        )
+        self.orchestrator = TicketAnalysisOrchestrator()
+
+    def test_valid_sections_kept(self):
+        """LLM이 유효한 summary_sections을 반환하면 그대로 유지."""
+        analysis = {
+            "narrative": {"summary": "테스트"},
+            "summary_sections": [
+                {"title": "핵심 이슈", "content": "이슈 내용"},
+                {"title": "현재 상태", "content": "상태 내용"},
+                {"title": "고객 요구사항", "content": "요구사항 내용"},
+            ],
+        }
+        result = self.orchestrator._ensure_summary_sections(
+            analysis, {"subject": "Test"}
+        )
+        assert len(result["summary_sections"]) == 3
+        assert result["summary_sections"][0]["title"] == "핵심 이슈"
+
+    def test_camelcase_key_normalized(self):
+        """LLM이 summarySections(camelCase)로 반환해도 정상 처리."""
+        analysis = {
+            "narrative": {"summary": "테스트"},
+            "summarySections": [
+                {"title": "A", "content": "내용A"},
+                {"title": "B", "content": "내용B"},
+            ],
+        }
+        result = self.orchestrator._ensure_summary_sections(
+            analysis, {"subject": "Test"}
+        )
+        assert "summary_sections" in result
+        assert len(result["summary_sections"]) == 2
+
+    def test_fallback_from_narrative(self):
+        """summary_sections가 없으면 narrative.summary + description으로 fallback."""
+        analysis = {
+            "narrative": {"summary": "고객이 로그인 문제를 겪고 있습니다."},
+        }
+        normalized_input = {
+            "subject": "로그인 안됨",
+            "description": "어제부터 로그인이 안됩니다.",
+        }
+        result = self.orchestrator._ensure_summary_sections(
+            analysis, normalized_input
+        )
+        sections = result["summary_sections"]
+        assert len(sections) == 2
+        assert sections[0]["title"] == "핵심 이슈"
+        assert "로그인 문제" in sections[0]["content"]
+        assert sections[1]["title"] == "현재 상태"
+        assert "로그인이 안됩니다" in sections[1]["content"]
+
+    def test_fallback_without_narrative(self):
+        """narrative도 없으면 subject를 사용."""
+        analysis = {}
+        normalized_input = {"subject": "결제 오류"}
+        result = self.orchestrator._ensure_summary_sections(
+            analysis, normalized_input
+        )
+        sections = result["summary_sections"]
+        assert len(sections) == 2
+        assert "결제 오류" in sections[0]["content"]
+
+    def test_insufficient_sections_triggers_fallback(self):
+        """LLM이 1개만 반환하면 fallback 실행."""
+        analysis = {
+            "narrative": {"summary": "요약"},
+            "summary_sections": [
+                {"title": "핵심 이슈", "content": "내용"},
+            ],
+        }
+        result = self.orchestrator._ensure_summary_sections(
+            analysis, {"subject": "Test", "description": "설명"}
+        )
+        sections = result["summary_sections"]
+        assert len(sections) == 2
+
+    def test_max_three_sections(self):
+        """4개 이상 반환해도 최대 3개로 제한."""
+        analysis = {
+            "summary_sections": [
+                {"title": f"섹션{i}", "content": f"내용{i}"} for i in range(5)
+            ],
+        }
+        result = self.orchestrator._ensure_summary_sections(
+            analysis, {"subject": "Test"}
+        )
+        assert len(result["summary_sections"]) == 3
+
+    def test_long_description_truncated(self):
+        """긴 description은 300자로 잘림."""
+        analysis = {"narrative": {"summary": "요약"}}
+        long_desc = "가" * 500
+        result = self.orchestrator._ensure_summary_sections(
+            analysis, {"subject": "Test", "description": long_desc}
+        )
+        content = result["summary_sections"][1]["content"]
+        assert len(content) <= 302  # 300 + "…"

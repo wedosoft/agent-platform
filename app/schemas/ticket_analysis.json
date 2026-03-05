@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "ticket_analysis_v1",
+  "$id": "ticket_analysis",
   "title": "Ticket Analysis Output",
   "description": "Schema for structured ticket analysis response",
   "type": "object",
@@ -110,6 +110,20 @@
             }
           },
           "description": "Suggested field value updates"
+        },
+        "summary_sections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["title", "content"],
+            "properties": {
+              "title": {"type": "string"},
+              "content": {"type": "string"}
+            }
+          },
+          "minItems": 2,
+          "maxItems": 3,
+          "description": "2-3 sections summarizing the ticket situation for the agent"
         },
         "evidence": {
           "type": "array",

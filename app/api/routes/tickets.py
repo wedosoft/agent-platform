@@ -114,9 +114,9 @@ async def analyze_ticket(
     Analyze a ticket and return structured analysis with gate decision.
 
     This endpoint performs schema-validated ticket analysis:
-    1. Validates input against ticket_normalized_v1 schema
+    1. Validates input against ticket_normalized schema
     2. Runs analysis pipeline via orchestrator
-    3. Validates output against ticket_analysis_v1 schema
+    3. Validates output against ticket_analysis schema
     4. Returns structured analysis with gate decision
 
     Args:
@@ -151,7 +151,7 @@ async def analyze_ticket(
     req_options = request.options or AnalyzeOptions()
 
     # Validate input against schema
-    validate_or_raise("ticket_normalized_v1", normalized_input)
+    validate_or_raise("ticket_normalized", normalized_input)
 
     try:
         # Convert to orchestrator options
@@ -182,7 +182,7 @@ async def analyze_ticket(
         }
 
         # Validate output against schema
-        if not validate_output("ticket_analysis_v1", response):
+        if not validate_output("ticket_analysis", response):
             logger.error(
                 f"[tickets.analyze] Output validation failed for {result.analysis_id}"
             )
@@ -190,7 +190,7 @@ async def analyze_ticket(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail={
                     "error_code": "ANALYSIS_FAILED",
-                    "message": "Output validation failed against ticket_analysis_v1 schema",
+                    "message": "Output validation failed against ticket_analysis schema",
                 },
             )
 
@@ -241,7 +241,7 @@ async def analyze_ticket_stream(
     request_dict = request.model_dump(exclude_none=True, by_alias=False, exclude={"options"})
     normalized_input = {"ticket_id": ticket_id, **request_dict}
     req_options = request.options or AnalyzeOptions()
-    validate_or_raise("ticket_normalized_v1", normalized_input)
+    validate_or_raise("ticket_normalized", normalized_input)
 
     orchestrator_options = OrchestratorOptions(
         skip_retrieval=req_options.skip_retrieval,

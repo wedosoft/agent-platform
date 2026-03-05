@@ -82,7 +82,7 @@ def test_fdk_chat_rejects_common_only_sources(test_client: TestClient):
 
 
 def test_fdk_chat_rejects_store_name_combination(monkeypatch, test_client: TestClient):
-    import app.api.routes.channel_fdk_v1 as channel_fdk_v1
+    import app.api.routes.channel_fdk as channel_fdk
 
     class StubSettings:
         gemini_store_tickets = "store-tickets"
@@ -90,7 +90,7 @@ def test_fdk_chat_rejects_store_name_combination(monkeypatch, test_client: TestC
         gemini_store_common = None
         gemini_common_store_name = None
 
-    monkeypatch.setattr(channel_fdk_v1, "get_settings", lambda: StubSettings())
+    monkeypatch.setattr(channel_fdk, "get_settings", lambda: StubSettings())
 
     res = test_client.post(
         "/api/fdk/v1/chat",

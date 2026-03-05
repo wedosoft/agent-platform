@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "ticket_normalized_v1",
+  "$id": "ticket_normalized",
   "title": "Normalized Ticket Input",
   "description": "Schema for normalized ticket data input to the analysis API",
   "type": "object",

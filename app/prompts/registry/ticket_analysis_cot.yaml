@@ -1,4 +1,4 @@
-id: ticket_analysis_cot_v1
+id: ticket_analysis_cot
 version: "1.0.0"
 description: "Chain-of-thought ticket analysis prompt for structured analysis"
 purpose: analyze_ticket_cot
@@ -8,8 +8,8 @@ model_defaults:
   max_tokens: 2000
   json_mode: true
 
-input_schema: ticket_normalized_v1
-output_schema: ticket_analysis_v1
+input_schema: ticket_normalized
+output_schema: ticket_analysis
 
 system_prompt: |
   You are an expert customer support analyst. Your task is to analyze support tickets and produce structured analysis reports.
@@ -79,8 +79,18 @@ system_prompt: |
       "pending_items": ["list of items still pending"],
       "notes": "optional status explanation"
     },
+    "summary_sections": [
+      {"title": "섹션 제목 (e.g. 핵심 이슈, 현재 상태, 고객 요구사항)", "content": "섹션 내용 (한국어, 2-3 문장)"}
+    ],
     "evidence": [{"source_type": "conversation|ticket_field|kb_article|similar_case", "source_id": "id", "excerpt": "quoted text", "relevance_score": 0.0-1.0}]
   }
+
+  ## summary_sections Guidelines
+
+  - Generate exactly 2-3 sections summarizing the ticket situation
+  - Each section must have a descriptive `title` and detailed `content` in Korean
+  - Recommended section titles: "핵심 이슈", "현재 상태", "고객 요구사항", "진행 경과", "주의 사항"
+  - Content should be 2-3 sentences per section, providing actionable context for the agent
 
   ## Response Language
 
@@ -154,3 +164,5 @@ eval_checks:
     check: response.intent in ['inquiry', 'complaint', 'request', 'technical_issue', 'feedback', 'unknown']
   - name: valid_sentiment
     check: response.sentiment in ['positive', 'neutral', 'negative', 'urgent']
+  - name: has_summary_sections
+    check: isinstance(response.summary_sections, list) and len(response.summary_sections) >= 2

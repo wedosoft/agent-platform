@@ -239,7 +239,7 @@ def stub_ticket_analysis_orchestrator(request, monkeypatch):
             meta={
                 "llm_provider": "stub",
                 "llm_model": "stub-model",
-                "prompt_version": "ticket_analysis_cot_v1",
+                "prompt_version": "ticket_analysis_cot",
                 "latency_ms": 100,
                 "token_usage": {"input": 0, "output": 0},
                 "retrieval_count": 0,

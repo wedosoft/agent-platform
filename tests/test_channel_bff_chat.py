@@ -30,7 +30,7 @@ def test_channel_bff_routes_exist_and_chat_is_unique():
     assert ("/api/web/v1/health", "GET") in seen
 
 
-def test_fdk_v1_chat_works(test_client, override_pipeline_client):
+def test_fdk_chat_works(test_client, override_pipeline_client):
     from app.main import app as app_main
     assert test_client.app is app_main
     from fastapi.routing import APIRoute
@@ -55,7 +55,7 @@ def test_fdk_v1_chat_works(test_client, override_pipeline_client):
     assert data["text"] == "stub response"
 
 
-def test_web_v1_chat_uses_multitenant_handler_when_available(test_client):
+def test_web_chat_uses_multitenant_handler_when_available(test_client):
     from app.main import app
     from app.models.session import ChatResponse
     from app.services.multitenant_chat_handler import get_multitenant_chat_handler

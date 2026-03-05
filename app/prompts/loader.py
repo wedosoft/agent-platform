@@ -83,7 +83,7 @@ def load_prompt(prompt_id: str) -> PromptSpec:
     Load prompt template by ID from registry.
 
     Args:
-        prompt_id: Unique identifier for the prompt (e.g., 'ticket_analysis_cot_v1')
+        prompt_id: Unique identifier for the prompt (e.g., 'ticket_analysis_cot')
 
     Returns:
         PromptSpec object with loaded configuration

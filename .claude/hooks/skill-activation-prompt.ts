@@ -50,9 +50,15 @@ async function main() {
         const prompt = data.prompt.toLowerCase();
 
         // Load skill rules
-        const projectDir = process.env.CLAUDE_PROJECT_DIR || '$HOME/project';
+        const projectDir = process.env.CLAUDE_PROJECT_DIR || data.cwd;
         const rulesPath = join(projectDir, '.claude', 'skills', 'skill-rules.json');
-        const rules: SkillRules = JSON.parse(readFileSync(rulesPath, 'utf-8'));
+        let rules: SkillRules;
+        try {
+            rules = JSON.parse(readFileSync(rulesPath, 'utf-8'));
+        } catch {
+            // skill-rules.json not found — skip silently
+            process.exit(0);
+        }
 
         const matchedSkills: MatchedSkill[] = [];
 
@@ -145,12 +151,11 @@ async function main() {
 
         process.exit(0);
     } catch (err) {
-        console.error('Error in skill-activation-prompt hook:', err);
-        process.exit(1);
+        // Hook errors should not block user prompts
+        process.exit(0);
     }
 }
 
-main().catch(err => {
-    console.error('Uncaught error:', err);
-    process.exit(1);
+main().catch(() => {
+    process.exit(0);
 });

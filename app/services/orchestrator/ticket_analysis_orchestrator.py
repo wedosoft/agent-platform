@@ -66,7 +66,7 @@ class TicketAnalysisOrchestrator:
     7. Persist run and result to Supabase
     """
 
-    PROMPT_ID = "ticket_analysis_cot_v1"
+    PROMPT_ID = "ticket_analysis_cot"
 
     # Gate thresholds
     GATE_CONFIRM_THRESHOLD = 0.9
@@ -101,7 +101,7 @@ class TicketAnalysisOrchestrator:
         Run full analysis pipeline.
 
         Args:
-            normalized_input: Validated ticket data (ticket_normalized_v1)
+            normalized_input: Validated ticket data (ticket_normalized)
             options: Analysis configuration
             tenant_id: Tenant identifier
 
@@ -149,6 +149,9 @@ class TicketAnalysisOrchestrator:
                 logger.warning(
                     "[orchestrator] Guardrail violations fixed: %s", violations
                 )
+
+            # Step 3.6: Ensure summary_sections exists
+            analysis = self._ensure_summary_sections(analysis, normalized_input)
 
             # Step 4: Compute gate
             confidence = analysis.get("confidence", 0.0)
@@ -244,7 +247,7 @@ class TicketAnalysisOrchestrator:
 
     # Field emit order: most important to user first
     _STREAM_FIELD_ORDER = [
-        "narrative", "confidence", "root_cause", "resolution",
+        "narrative", "summary_sections", "confidence", "root_cause", "resolution",
         "intent", "sentiment", "risk_tags", "field_proposals",
         "escalation_history", "current_status", "evidence",
     ]
@@ -298,6 +301,8 @@ class TicketAnalysisOrchestrator:
             analysis, violations = apply_guardrails(analysis)
             if violations:
                 logger.warning("[orchestrator/stream] Guardrail violations: %s", violations)
+
+            analysis = self._ensure_summary_sections(analysis, normalized_input)
 
             confidence = analysis.get("confidence", 0.0)
             gate = self._compute_gate(confidence, options.confidence_threshold)
@@ -406,6 +411,57 @@ class TicketAnalysisOrchestrator:
             lines.append(f"- {name} ({label}): {f_type}")
 
         return "\n".join(lines) if lines else "(필드 정보 없음)"
+
+    def _ensure_summary_sections(
+        self,
+        analysis: Dict[str, Any],
+        normalized_input: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Ensure summary_sections exists with at least 2 valid sections.
+
+        If the LLM returned valid sections, normalize them.
+        Otherwise, build fallback from narrative.summary and ticket description.
+        """
+        sections = analysis.get("summary_sections") or analysis.get("summarySections")
+
+        # Try to normalize LLM-provided sections
+        if isinstance(sections, list) and sections:
+            normalized = []
+            for s in sections:
+                if not isinstance(s, dict):
+                    continue
+                title = (s.get("title") or "").strip()
+                content = (s.get("content") or "").strip()
+                if title and content:
+                    normalized.append({"title": title, "content": content})
+            if len(normalized) >= 2:
+                analysis["summary_sections"] = normalized[:3]
+                return analysis
+
+        # Fallback: build from narrative.summary + description
+        narrative = analysis.get("narrative") or {}
+        summary = (narrative.get("summary") or "").strip()
+        subject = str(normalized_input.get("subject") or "").strip()
+        description = str(
+            normalized_input.get("description")
+            or normalized_input.get("description_text")
+            or ""
+        ).strip()
+
+        if not summary:
+            summary = subject or "티켓 요약을 생성하지 못했습니다."
+
+        desc_snippet = description
+        if len(desc_snippet) > 300:
+            desc_snippet = desc_snippet[:300] + "…"
+
+        analysis["summary_sections"] = [
+            {"title": "핵심 이슈", "content": summary},
+            {"title": "현재 상태", "content": desc_snippet or "설명(본문) 정보가 없습니다."},
+        ]
+
+        logger.info("[orchestrator] summary_sections fallback generated")
+        return analysis
 
     def _compute_gate(self, confidence: float, threshold: float) -> str:
         """

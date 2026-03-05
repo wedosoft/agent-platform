@@ -41,9 +41,9 @@ class TestPromptLoader:
 
     def test_load_prompt_success(self):
         """Load existing prompt template."""
-        prompt = load_prompt("ticket_analysis_cot_v1")
+        prompt = load_prompt("ticket_analysis_cot")
 
-        assert prompt.id == "ticket_analysis_cot_v1"
+        assert prompt.id == "ticket_analysis_cot"
         assert prompt.version == "1.0.0"
         assert "customer support analyst" in prompt.system_prompt.lower()
         assert prompt.json_mode is True
@@ -56,7 +56,7 @@ class TestPromptLoader:
 
     def test_prompt_render(self):
         """Prompt renders with context variables."""
-        prompt = load_prompt("ticket_analysis_cot_v1")
+        prompt = load_prompt("ticket_analysis_cot")
         context = {
             "ticket_id": "12345",
             "subject": "Test Subject",
